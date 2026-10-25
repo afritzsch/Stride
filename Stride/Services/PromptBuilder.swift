@@ -39,6 +39,7 @@ nonisolated struct PromptBuilder {
         lines.append("- Primary sport: \(profile.primarySport), experience: \(profile.experience.rawValue)")
         if let age = profile.age { lines.append("- Age: \(age)") }
         lines.append("- Max HR: \(Int(profile.effectiveMaxHeartRate)) bpm\(profile.isMaxHeartRateEstimated ? " (estimated)" : "")")
+        lines.append("- HR zones (as set on the athlete's watch; use these, don't derive your own): \(metrics.heartRateZones.summary)")
         lines.append("- Available: \(profile.trainingDaysPerWeek) training days/week, \(Self.num(profile.weeklyHoursAvailable, 1)) h/week")
         lines.append("- Targets: \(Self.num(profile.sleepTargetHours, 1)) h sleep, \(profile.dailyStepTarget) steps/day")
         let focus = FocusArea.allCases.filter { profile.focusAreas.contains($0) }.map(\.title)
@@ -63,7 +64,7 @@ nonisolated struct PromptBuilder {
         let zoneTotal = ind.zoneMinutes28.values.reduce(0, +)
         if zoneTotal > 0 {
             let share = { (zone: IntensityZone) in "\(Int((ind.zoneMinutes28[zone] ?? 0) / zoneTotal * 100))%" }
-            lines.append("- Intensity mix 28 d by avg HR (easy <75% / moderate / hard >85% max HR / no HR): \(share(.easy)) / \(share(.moderate)) / \(share(.hard)) / \(share(.unknown))")
+            lines.append("- Intensity mix 28 d by avg HR (easy Z1–2 / moderate Z3 / hard Z4–5 / no HR): \(share(.easy)) / \(share(.moderate)) / \(share(.hard)) / \(share(.unknown))")
         }
 
         lines.append("")

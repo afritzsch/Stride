@@ -8,6 +8,8 @@ nonisolated enum AnalyzerError: LocalizedError {
     case truncated
     case malformedResponse
     case onDeviceUnavailable(String)
+    case notReady(String)
+    case appleIntelligence(String)
     case contextTooLarge
 
     var errorDescription: String? {
@@ -17,7 +19,7 @@ nonisolated enum AnalyzerError: LocalizedError {
         case .refused: "Claude declined to analyze this request."
         case .truncated: "The analysis was cut off. Please try again."
         case .malformedResponse: "Couldn't read the analysis. Please try again."
-        case .onDeviceUnavailable(let reason): reason
+        case .onDeviceUnavailable(let reason), .notReady(let reason), .appleIntelligence(let reason): reason
         case .contextTooLarge: "Too much data for the on-device model. Try Claude instead."
         }
     }
@@ -32,7 +34,7 @@ nonisolated struct ClaudeAnalyzer {
 
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
-    func analyze(instructions: String, prompt: String) async throws -> AnalysisReport {
+    func analyze<Output: StructuredOutput>(_: Output.Type, instructions: String, prompt: String) async throws -> Output {
         guard !apiKey.isEmpty else { throw AnalyzerError.missingAPIKey }
 
         var request = URLRequest(url: Self.endpoint)
@@ -52,7 +54,7 @@ nonisolated struct ClaudeAnalyzer {
             "messages": [["role": "user", "content": prompt]],
             "output_config": [
                 "effort": "high",
-                "format": ["type": "json_schema", "schema": AnalysisReport.jsonSchema],
+                "format": ["type": "json_schema", "schema": Output.jsonSchema],
             ],
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -72,7 +74,7 @@ nonisolated struct ClaudeAnalyzer {
         }
         let text = message.content.filter { $0.type == "text" }.compactMap(\.text).joined()
         do {
-            return try JSONDecoder().decode(AnalysisReport.self, from: Data(text.utf8))
+            return try JSONDecoder().decode(Output.self, from: Data(text.utf8))
         } catch {
             throw AnalyzerError.malformedResponse
         }
@@ -98,18 +100,57 @@ nonisolated struct ClaudeAnalyzer {
     }
 }
 
-// MARK: - On-device (Apple Foundation Models)
+// MARK: - Apple Intelligence (Foundation Models)
 
-nonisolated struct OnDeviceAnalyzer {
-    /// nil when the model is ready, otherwise a user-facing reason.
-    static var unavailableReason: String? {
+nonisolated enum AppleModelRoute: String, Codable, Sendable {
+    case privateCloud, onDevice
+
+    var title: String {
+        switch self {
+        case .privateCloud: "Apple Private Cloud Compute"
+        case .onDevice: "Apple on-device model"
+        }
+    }
+}
+
+/// Prefers Apple's larger server model on Private Cloud Compute (free, quota-limited) and falls back
+/// to the on-device model when it's off, unreachable, or out of quota.
+nonisolated struct AppleAnalyzer {
+    var allowPrivateCloud: Bool
+
+    struct Result<Output> {
+        var report: Output
+        var route: AppleModelRoute
+        /// Set when Private Cloud Compute was wanted but the on-device model ran instead.
+        var fallbackReason: String?
+    }
+
+    /// Tokens kept free in the on-device context window for the generated report.
+    private static let outputReserve = 2000
+
+    /// Creating `PrivateCloudComputeLanguageModel` traps unless the app is signed with the
+    /// `com.apple.developer.private-cloud-compute` entitlement, which free Personal Teams can't get.
+    /// Build with the PRIVATE_CLOUD_COMPUTE compilation condition (and that entitlement) to enable it.
+    #if PRIVATE_CLOUD_COMPUTE
+    static let isPrivateCloudInBuild = true
+    #else
+    static let isPrivateCloudInBuild = false
+    #endif
+
+    /// nil when at least one route can run, otherwise a user-facing reason.
+    static func unavailableReason(allowPrivateCloud: Bool) -> String? {
+        if allowPrivateCloud, privateCloudBlocker == nil { return nil }
+        return onDeviceBlocker
+    }
+
+    static var onDeviceBlocker: String? {
         switch SystemLanguageModel.default.availability {
         case .available:
             nil
         case .unavailable(.deviceNotEligible):
             "This device doesn't support Apple Intelligence."
         case .unavailable(.appleIntelligenceNotEnabled):
-            "Turn on Apple Intelligence in the Settings app to use the on-device model."
+            "Turn on Apple Intelligence in the Settings app."
         case .unavailable(.modelNotReady):
             "The on-device model is still downloading. Try again later."
         case .unavailable:
@@ -117,13 +158,123 @@ nonisolated struct OnDeviceAnalyzer {
         }
     }
 
-    func analyze(instructions: String, prompt: String) async throws -> AnalysisReport {
-        if let reason = Self.unavailableReason { throw AnalyzerError.onDeviceUnavailable(reason) }
-        let session = LanguageModelSession(instructions: instructions)
-        do {
-            return try await session.respond(to: prompt, generating: AnalysisReport.self).content
-        } catch LanguageModelError.contextSizeExceeded {
-            throw AnalyzerError.contextTooLarge
+    static var privateCloudBlocker: String? {
+        guard isPrivateCloudInBuild else {
+            return "Private Cloud Compute needs an entitlement only paid Apple Developer accounts can get."
         }
+        let model = PrivateCloudComputeLanguageModel()
+        switch model.availability {
+        case .available:
+            break
+        case .unavailable(.deviceNotEligible):
+            return "Private Cloud Compute isn't available on this device."
+        case .unavailable(.systemNotReady):
+            return "Private Cloud Compute isn't ready yet."
+        case .unavailable:
+            return "Private Cloud Compute is unavailable."
+        }
+        if model.quotaUsage.isLimitReached {
+            return quotaMessage(resetDate: model.quotaUsage.resetDate)
+        }
+        return nil
+    }
+
+    /// Short status for Settings.
+    static var privateCloudStatus: String {
+        if let blocker = privateCloudBlocker { return blocker }
+        if case .belowLimit(let usage) = PrivateCloudComputeLanguageModel().quotaUsage.status, usage.isApproachingLimit {
+            return "Ready, close to the usage limit"
+        }
+        return "Ready"
+    }
+
+    func analyze<Output: StructuredOutput>(
+        _: Output.Type,
+        instructions: String,
+        fullPrompt: String,
+        compactPrompt: String
+    ) async throws -> Result<Output> {
+        var fallbackReason: String?
+
+        if allowPrivateCloud {
+            if let blocker = Self.privateCloudBlocker {
+                fallbackReason = blocker
+            } else {
+                do {
+                    let report: Output = try await Self.respond(
+                        model: PrivateCloudComputeLanguageModel(),
+                        instructions: instructions,
+                        prompts: [fullPrompt, compactPrompt]
+                    )
+                    return Result(report: report, route: .privateCloud)
+                } catch let error as PrivateCloudComputeLanguageModel.Error {
+                    fallbackReason = Self.describe(error)
+                } catch LanguageModelError.rateLimited(let limit) {
+                    fallbackReason = Self.quotaMessage(resetDate: limit.resetDate)
+                }
+            }
+        }
+
+        if let blocker = Self.onDeviceBlocker {
+            throw AnalyzerError.onDeviceUnavailable([fallbackReason, blocker].compactMap(\.self).joined(separator: " "))
+        }
+        // Send the full 8 weeks when it fits the small on-device window, otherwise the compact brief.
+        let prompts = await Self.fitsOnDevice(Output.self, instructions: instructions, prompt: fullPrompt)
+            ? [fullPrompt, compactPrompt]
+            : [compactPrompt]
+        let report: Output = try await Self.respond(model: SystemLanguageModel.default, instructions: instructions, prompts: prompts)
+        return Result(report: report, route: .onDevice, fallbackReason: fallbackReason)
+    }
+
+    /// Tries each prompt in order, moving to the next (smaller) one if the context window overflows.
+    private static func respond<Output: StructuredOutput>(model: some LanguageModel, instructions: String, prompts: [String]) async throws -> Output {
+        for (index, prompt) in prompts.enumerated() {
+            let session = LanguageModelSession(model: model, instructions: instructions)
+            do {
+                return try await session.respond(to: prompt, generating: Output.self).content
+            } catch LanguageModelError.contextSizeExceeded {
+                if index == prompts.count - 1 { throw AnalyzerError.contextTooLarge }
+            } catch let error as LanguageModelError {
+                throw AnalyzerError.appleIntelligence(Self.describe(error))
+            }
+        }
+        throw AnalyzerError.contextTooLarge
+    }
+
+    private static func fitsOnDevice<Output: Generable>(_: Output.Type, instructions: String, prompt: String) async -> Bool {
+        let model = SystemLanguageModel.default
+        do {
+            let used = try await model.tokenCount(for: instructions)
+                + model.tokenCount(for: prompt)
+                + model.tokenCount(for: Output.generationSchema)
+            return used + outputReserve <= model.contextSize
+        } catch {
+            return false
+        }
+    }
+
+    private static func describe(_ error: PrivateCloudComputeLanguageModel.Error) -> String {
+        switch error {
+        case .networkFailure: "Couldn't reach Private Cloud Compute."
+        case .quotaLimitReached(let limit): quotaMessage(resetDate: limit.resetDate)
+        case .serviceUnavailable: "Private Cloud Compute is temporarily unavailable."
+        @unknown default: "Private Cloud Compute failed."
+        }
+    }
+
+    private static func describe(_ error: LanguageModelError) -> String {
+        switch error {
+        case .guardrailViolation: "Apple Intelligence's safety filter blocked this request."
+        case .refusal: "Apple Intelligence declined to analyze this."
+        case .rateLimited: "Apple Intelligence is busy. Try again in a moment."
+        case .timeout: "Apple Intelligence took too long. Try again."
+        case .unsupportedLanguageOrLocale: "Apple Intelligence doesn't support your device's language for this yet."
+        default: "Apple Intelligence couldn't complete the analysis (\(error.localizedDescription))."
+        }
+    }
+
+    private static func quotaMessage(resetDate: Date?) -> String {
+        guard let resetDate else { return "Private Cloud Compute usage limit reached." }
+        return "Private Cloud Compute usage limit reached until \(resetDate.formatted(date: .abbreviated, time: .shortened))."
     }
 }

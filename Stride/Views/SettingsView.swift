@@ -3,6 +3,9 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @State private var apiKeyDraft = ""
+    @State private var exportURL: URL?
+    @State private var isExporting = false
+    @State private var exportError: String?
 
     var body: some View {
         @Bindable var model = model
@@ -30,8 +33,16 @@ struct SettingsView: View {
                             LabeledContent("Saved key", value: "••••" + model.apiKey.suffix(4))
                             Button("Remove key", role: .destructive) { model.apiKey = "" }
                         }
-                    case .onDevice:
-                        LabeledContent("Status", value: OnDeviceAnalyzer.unavailableReason ?? "Ready")
+                    case .apple:
+                        if AppleAnalyzer.isPrivateCloudInBuild {
+                            Toggle("Use Private Cloud Compute", isOn: $model.allowPrivateCloud)
+                            if model.allowPrivateCloud {
+                                LabeledContent("Private Cloud Compute", value: AppleAnalyzer.privateCloudStatus)
+                            }
+                        } else {
+                            LabeledContent("Private Cloud Compute", value: "Needs paid developer account")
+                        }
+                        LabeledContent("On-device model", value: AppleAnalyzer.onDeviceBlocker ?? "Ready")
                     }
                 } header: {
                     Text("AI engine")
@@ -39,8 +50,12 @@ struct SettingsView: View {
                     switch model.engine {
                     case .claude:
                         Text("Uses Claude Opus 5.5 with your own key from [platform.claude.com](https://platform.claude.com). A summary of your health data is sent to Anthropic for each analysis. The key is stored in the Keychain.")
-                    case .onDevice:
-                        Text("Runs privately on your iPhone with Apple Intelligence. Free and offline, but the analysis is shorter and looks at less history.")
+                    case .apple:
+                        if AppleAnalyzer.isPrivateCloudInBuild {
+                            Text("Free, no API key. With Private Cloud Compute on, Apple's larger server model runs the analysis; Apple doesn't store your data. It has a usage limit, and when you reach it or are offline, the smaller on-device model takes over. Turn it off to keep everything on your iPhone.")
+                        } else {
+                            Text("Free, no API key, and private: the analysis runs on your iPhone with Apple's on-device model. Apple's larger Private Cloud Compute model needs an entitlement that only paid Apple Developer accounts can get.")
+                        }
                     }
                 }
 
@@ -56,6 +71,8 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+
+                HeartRateZonesSection()
 
                 Section("Availability") {
                     Stepper("Training days: \(model.profile.trainingDaysPerWeek)/week", value: $model.profile.trainingDaysPerWeek, in: 1...7)
@@ -105,13 +122,91 @@ struct SettingsView: View {
                             Task { await model.connectHealth() }
                         }
                     }
+                    Button {
+                        Task {
+                            isExporting = true
+                            defer { isExporting = false }
+                            do {
+                                exportURL = try await model.exportHealthData()
+                                exportError = nil
+                            } catch {
+                                exportError = error.localizedDescription
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text("Export data for debugging")
+                            if isExporting { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(isExporting)
+                    if let exportURL {
+                        ShareLink(item: exportURL) {
+                            Label("Share export file", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    if let exportError {
+                        Text(exportError).font(.footnote).foregroundStyle(.red)
+                    }
                 } header: {
                     Text("Data")
                 } footer: {
-                    Text("Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
+                    Text("The debug export contains your raw health data for the last 8 weeks. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
                 }
             }
             .navigationTitle("Settings")
+        }
+    }
+}
+
+private struct HeartRateZonesSection: View {
+    @Environment(AppModel.self) private var model
+
+    private var zones: HeartRateZones {
+        model.metrics?.heartRateZones ?? model.profile.heartRateZones(restingHR: 60)
+    }
+
+    var body: some View {
+        @Bindable var model = model
+        Section {
+            Picker("Zones based on", selection: $model.profile.zoneMethod) {
+                ForEach(HeartRateZoneMethod.allCases) { Text($0.title).tag($0) }
+            }
+            .onChange(of: model.profile.zoneMethod) { _, method in
+                // Start custom zones from the ones currently shown, so only the differences need typing.
+                if method == .custom, model.profile.customZoneFloors.count != 4 {
+                    model.profile.customZoneFloors = model.profile.heartRateZones(restingHR: model.metrics?.indicators.restingHRBaseline ?? 60)
+                        .floors.map { Int($0.rounded()) }
+                }
+            }
+            if model.profile.zoneMethod == .custom, model.profile.customZoneFloors.count == 4 {
+                ForEach(0..<4, id: \.self) { index in
+                    LabeledContent("Zone \(index + 2) starts at") {
+                        TextField("bpm", value: $model.profile.customZoneFloors[index], format: .number)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+            ForEach(Array(zones.ranges.enumerated()).reversed(), id: \.offset) { index, range in
+                LabeledContent("Zone \(index + 1)", value: "\(range) bpm")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Heart rate zones")
+        } footer: {
+            switch model.profile.zoneMethod {
+            case .maxHeartRate:
+                Text("Garmin's default: zones start at 60, 70, 80 and 90% of max HR. If your watch shows different zones, set your max HR above, or pick Custom and copy the zones from Garmin Connect.")
+            case .heartRateReserve:
+                Text("Percentages of the range between resting HR (your 28-day median, \(Int(model.metrics?.indicators.restingHRBaseline ?? 60)) bpm) and max HR.")
+            case .custom:
+                if model.profile.customZoneFloors != model.profile.customZoneFloors.sorted() {
+                    Text("Each zone has to start above the one before it. Until then, % of max HR zones are used.").foregroundStyle(.orange)
+                } else {
+                    Text("Copy the zones from Garmin Connect (heart rate zones in your user settings), entering where each zone starts.")
+                }
+            }
         }
     }
 }

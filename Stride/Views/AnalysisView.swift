@@ -35,10 +35,7 @@ private struct RunAnalysisCard: View {
     var body: some View {
         Card {
             HStack {
-                Label(
-                    model.engine == .claude ? "Claude" : "Apple on-device model",
-                    systemImage: model.engine == .claude ? "sparkles" : "iphone"
-                )
+                Label(engineLabel, systemImage: model.engine == .claude ? "sparkles" : "apple.intelligence")
                 .font(.subheadline.bold())
                 Spacer()
                 if let snapshot = model.snapshot {
@@ -51,7 +48,7 @@ private struct RunAnalysisCard: View {
             if model.isAnalyzing {
                 HStack(spacing: 12) {
                     ProgressView()
-                    Text(model.engine == .claude ? "Claude is reviewing 8 weeks of data. This can take a minute…" : "Analyzing on device…")
+                    Text(model.engine == .claude ? "Claude is reviewing 8 weeks of data. This can take a minute…" : "Apple Intelligence is analyzing your data…")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -71,9 +68,19 @@ private struct RunAnalysisCard: View {
             } else if model.snapshot == nil {
                 Text("Connect Apple Health on the Dashboard first.").font(.footnote).foregroundStyle(.secondary)
             }
+            if let notice = model.analysisNotice {
+                Text(notice).font(.footnote).foregroundStyle(.secondary)
+            }
             if let error = model.analysisError {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
+        }
+    }
+
+    private var engineLabel: String {
+        switch model.engine {
+        case .claude: "Claude"
+        case .apple: model.usesPrivateCloud ? "Apple Intelligence · Private Cloud" : "Apple Intelligence · On-device"
         }
     }
 }
@@ -89,7 +96,7 @@ struct ReportContent: View {
                 HStack {
                     StatusBadge(text: report.trainingStatus.title, color: report.trainingStatus.color)
                     Spacer()
-                    Text("\(analysis.engine.title) · \(analysis.createdAt.formatted(.relative(presentation: .named)))")
+                    Text("\(analysis.sourceTitle) · \(analysis.createdAt.formatted(.relative(presentation: .named)))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -162,7 +169,7 @@ private struct HistoryList: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(analysis.report.headline).font(.subheadline).lineLimit(2)
-                        Text("\(analysis.engine.title) · \(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                        Text("\(analysis.sourceTitle) · \(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

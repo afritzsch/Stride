@@ -41,23 +41,25 @@ nonisolated enum KeychainStore {
     }
 }
 
-/// Saves analysis history as a JSON file in Application Support.
-nonisolated enum AnalysisStore {
-    private static var fileURL: URL {
-        URL.applicationSupportDirectory.appending(path: "analyses.json")
+/// Saves Codable values as JSON files in Application Support.
+nonisolated enum JSONStore {
+    static let analyses = "analyses.json"
+    static let runAnalyses = "run-analyses.json"
+
+    static func load<Value: Decodable>(_: Value.Type, from file: String) -> Value? {
+        guard let data = try? Data(contentsOf: URL.applicationSupportDirectory.appending(path: file)) else { return nil }
+        return try? JSONDecoder().decode(Value.self, from: data)
     }
 
-    static func load() -> [SavedAnalysis] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        return (try? JSONDecoder().decode([SavedAnalysis].self, from: data)) ?? []
-    }
-
-    static func save(_ analyses: [SavedAnalysis]) {
+    static func save(_ value: some Encodable, to file: String) {
         do {
             try FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(analyses).write(to: fileURL, options: [.atomic, .completeFileProtection])
+            try JSONEncoder().encode(value).write(
+                to: URL.applicationSupportDirectory.appending(path: file),
+                options: [.atomic, .completeFileProtection]
+            )
         } catch {
-            assertionFailure("Failed to save analyses: \(error)")
+            assertionFailure("Failed to save \(file): \(error)")
         }
     }
 }

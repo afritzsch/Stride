@@ -4,21 +4,27 @@ struct ContentView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        TabView {
-            Tab("Dashboard", systemImage: "chart.bar.xaxis") {
+        @Bindable var model = model
+
+        TabView(selection: $model.selectedTab) {
+            Tab("Dashboard", systemImage: "chart.bar.xaxis", value: AppTab.dashboard) {
                 DashboardView()
             }
-            Tab("AI Coach", systemImage: "sparkles") {
+            Tab("AI Coach", systemImage: "sparkles", value: AppTab.coach) {
                 AnalysisView()
             }
-            Tab("Plan", systemImage: "calendar") {
+            Tab("Plan", systemImage: "calendar", value: AppTab.plan) {
                 PlanView()
             }
-            Tab("Settings", systemImage: "gearshape") {
+            Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
                 SettingsView()
             }
         }
-        .task { await model.refresh() }
+        .task {
+            await model.refresh()
+            model.applyLaunchRoute()
+            await model.handleLaunchExport()
+        }
     }
 }
 

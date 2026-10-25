@@ -100,57 +100,74 @@ nonisolated struct AnalysisReport: Codable, Hashable, Sendable {
     var weekPlan: [PlannedDay]
 }
 
-extension AnalysisReport {
-    /// JSON Schema mirroring the Codable shape, for Claude's `output_config.format`.
-    nonisolated static var jsonSchema: [String: Any] {
-        func object(_ properties: [String: Any]) -> [String: Any] {
-            ["type": "object",
-             "properties": properties,
-             "required": Array(properties.keys).sorted(),
-             "additionalProperties": false]
-        }
-        func enumeration<E: RawRepresentable & CaseIterable>(_: E.Type) -> [String: Any] where E.RawValue == String {
-            ["type": "string", "enum": E.allCases.map(\.rawValue)]
-        }
-        let string: [String: Any] = ["type": "string"]
+/// A result type both engines can produce: Claude via `output_config.format`, Apple via guided generation.
+nonisolated protocol StructuredOutput: Generable, Decodable, Sendable {
+    /// JSON Schema mirroring the Codable shape, for Claude's structured output.
+    static var jsonSchema: [String: Any] { get }
+}
 
-        return object([
-            "headline": string,
-            "trainingStatus": enumeration(TrainingStatus.self),
-            "assessment": string,
-            "insights": ["type": "array", "items": object([
-                "area": enumeration(InsightArea.self),
-                "tone": enumeration(InsightTone.self),
-                "title": string,
-                "detail": string,
-            ])],
-            "recommendations": ["type": "array", "items": object([
-                "area": enumeration(InsightArea.self),
-                "priority": enumeration(Priority.self),
-                "action": string,
-                "rationale": string,
-            ])],
-            "goalOutlook": string,
-            "weekPlan": ["type": "array", "items": object([
-                "day": string,
-                "intensity": enumeration(SessionIntensity.self),
-                "session": string,
-                "durationMinutes": ["type": "integer"],
-                "details": string,
-            ])],
+nonisolated enum JSONSchema {
+    static var string: [String: Any] { ["type": "string"] }
+    static var integer: [String: Any] { ["type": "integer"] }
+
+    static func object(_ properties: [String: Any]) -> [String: Any] {
+        ["type": "object",
+         "properties": properties,
+         "required": Array(properties.keys).sorted(),
+         "additionalProperties": false]
+    }
+
+    static func array(_ items: [String: Any]) -> [String: Any] {
+        ["type": "array", "items": items]
+    }
+
+    static func enumeration<E: RawRepresentable & CaseIterable>(_: E.Type) -> [String: Any] where E.RawValue == String {
+        ["type": "string", "enum": E.allCases.map(\.rawValue)]
+    }
+}
+
+extension AnalysisReport: StructuredOutput {
+    nonisolated static var jsonSchema: [String: Any] {
+        typealias S = JSONSchema
+        return S.object([
+            "headline": S.string,
+            "trainingStatus": S.enumeration(TrainingStatus.self),
+            "assessment": S.string,
+            "insights": S.array(S.object([
+                "area": S.enumeration(InsightArea.self),
+                "tone": S.enumeration(InsightTone.self),
+                "title": S.string,
+                "detail": S.string,
+            ])),
+            "recommendations": S.array(S.object([
+                "area": S.enumeration(InsightArea.self),
+                "priority": S.enumeration(Priority.self),
+                "action": S.string,
+                "rationale": S.string,
+            ])),
+            "goalOutlook": S.string,
+            "weekPlan": S.array(S.object([
+                "day": S.string,
+                "intensity": S.enumeration(SessionIntensity.self),
+                "session": S.string,
+                "durationMinutes": S.integer,
+                "details": S.string,
+            ])),
         ])
     }
 }
 
 nonisolated enum AIEngine: String, Codable, CaseIterable, Identifiable, Sendable {
-    case claude, onDevice
+    case claude
+    // Raw value kept from when this engine was on-device only, so saved settings still decode.
+    case apple = "onDevice"
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .claude: "Claude"
-        case .onDevice: "On-device"
+        case .apple: "Apple Intelligence"
         }
     }
 }
@@ -159,6 +176,10 @@ nonisolated struct SavedAnalysis: Codable, Hashable, Identifiable, Sendable {
     var id = UUID()
     var createdAt: Date
     var engine: AIEngine
+    /// The model that actually ran, e.g. "Apple Private Cloud Compute". nil for analyses saved before this existed.
+    var modelName: String?
     var planStartDate: Date
     var report: AnalysisReport
+
+    var sourceTitle: String { modelName ?? engine.title }
 }

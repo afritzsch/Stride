@@ -71,6 +71,110 @@ nonisolated enum DemoData {
     }
 }
 
+nonisolated extension DemoData {
+    static func detail(for workout: WorkoutSummary) -> WorkoutDetail {
+        WorkoutDetail.build(summary: workout, raw: rawWorkout(for: workout))
+    }
+
+    /// Fine-grained synthetic samples matching a demo workout's summary, like a watch that shares everything.
+    static func rawWorkout(for workout: WorkoutSummary) -> RawWorkoutData {
+        var rng = SeededGenerator(seed: UInt64(max(0, workout.start.timeIntervalSince1970)))
+        let total = workout.durationMinutes * 60
+        let end = workout.start.addingTimeInterval(total)
+        let source = workout.sourceName
+        let averageHR = workout.averageHeartRate ?? 130
+        // Interval-style sessions (high average HR, short) get work/recovery blocks.
+        let isIntervals = workout.isFootSport && averageHR >= 158 && workout.durationMinutes < 70
+
+        var heartRate: [RawSample] = []
+        var elapsed = 0.0
+        while elapsed <= total {
+            let warmUp = min(elapsed / 420, 1)
+            let drift = elapsed / total * 6 - 3
+            var value = averageHR - 22 + 22 * warmUp + drift
+            if isIntervals, elapsed > 900, elapsed < total - 600 {
+                value += Int((elapsed - 900) / 180).isMultiple(of: 2) ? 10 : -12
+            }
+            let date = workout.start.addingTimeInterval(elapsed)
+            heartRate.append(RawSample(start: date, end: date, value: value + Double.random(in: -3...3, using: &rng), source: source))
+            elapsed += 15
+        }
+
+        var distance: [RawSample] = []
+        var steps: [RawSample] = []
+        if workout.isFootSport, let km = workout.distanceKm, km > 0 {
+            let metersPerMinute = km * 1000 / workout.durationMinutes
+            for minute in 0..<Int(workout.durationMinutes) {
+                let start = workout.start.addingTimeInterval(Double(minute) * 60)
+                let fade = 1 - Double(minute) / workout.durationMinutes * 0.05
+                distance.append(RawSample(
+                    start: start,
+                    end: start.addingTimeInterval(60),
+                    value: metersPerMinute * fade * Double.random(in: 0.94...1.06, using: &rng),
+                    source: source
+                ))
+                steps.append(RawSample(start: start, end: start.addingTimeInterval(60), value: Double.random(in: 166...178, using: &rng), source: source))
+            }
+            // Scale so the samples add up to the summary's distance exactly.
+            let scale = km * 1000 / max(distance.map(\.value).reduce(0, +), 1)
+            distance = distance.map { RawSample(start: $0.start, end: $0.end, value: $0.value * scale, source: $0.source) }
+        }
+
+        let isRun = workout.sport == "Running"
+        let hasRoute = workout.isFootSport || workout.sport == "Cycling"
+        return RawWorkoutData(
+            workoutID: workout.id,
+            start: workout.start,
+            end: end,
+            source: source,
+            heartRate: heartRate,
+            distance: distance,
+            steps: steps,
+            elevationGainM: workout.isFootSport ? Double.random(in: 25...140, using: &rng).rounded() : nil,
+            temperatureC: 11,
+            humidityPercent: 72,
+            isIndoor: workout.sport == "Strength",
+            powerW: isRun ? Double.random(in: 240...290, using: &rng) : nil,
+            cyclingCadence: workout.sport == "Cycling" ? 86 : nil,
+            route: hasRoute ? route(for: workout, distance: distance, rng: &rng) : []
+        )
+    }
+
+    /// GPS fixes every 5 s on a loop in Berlin's Tiergarten, following the distance samples so
+    /// splits computed from the route match the ones from distance.
+    private static func route(for workout: WorkoutSummary, distance: [RawSample], rng: inout SeededGenerator) -> [RoutePoint] {
+        guard let km = workout.distanceKm, km > 0 else { return [] }
+        let total = workout.durationMinutes * 60
+        func metersCovered(after elapsed: Double) -> Double {
+            guard !distance.isEmpty else { return km * 1000 * elapsed / total }
+            let date = workout.start.addingTimeInterval(elapsed)
+            return distance.map { sample in
+                let length = sample.end.timeIntervalSince(sample.start)
+                let share = min(max(date.timeIntervalSince(sample.start) / length, 0), 1)
+                return sample.value * share
+            }.reduce(0, +)
+        }
+        // Whole laps of at most 5 km, so the run ends where it started.
+        let lap = km * 1000 / (km / 5).rounded(.up)
+        let radius = lap / (2 * .pi)
+        let center = (latitude: 52.5145, longitude: 13.3501)
+        let metersPerDegreeLatitude = 111_320.0
+        let metersPerDegreeLongitude = metersPerDegreeLatitude * cos(center.latitude * .pi / 180)
+        return stride(from: 0.0, through: total, by: 5).map { elapsed in
+            let angle = metersCovered(after: elapsed) / radius
+            let north = radius * sin(angle) + Double.random(in: -1...1, using: &rng)
+            let east = radius * (1 - cos(angle)) + Double.random(in: -1...1, using: &rng)
+            return RoutePoint(
+                date: workout.start.addingTimeInterval(elapsed),
+                latitude: center.latitude + north / metersPerDegreeLatitude,
+                longitude: center.longitude + east / metersPerDegreeLongitude,
+                altitudeM: 35 + 4 * sin(angle * 2),
+                accuracyM: 4
+            )
+        }
+    }
+}
+
 /// SplitMix64, so demo data is stable between launches.
 nonisolated struct SeededGenerator: RandomNumberGenerator {
     private var state: UInt64

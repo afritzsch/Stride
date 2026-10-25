@@ -250,6 +250,7 @@
 		000000000000000111000000 /* Debug configuration for PBXNativeTarget "Stride" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Stride/Stride.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -259,7 +260,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts, sleep, heart rate, HRV and steps from Apple Health so the AI coach can analyze your training and plan your week.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV and steps from Apple Health so the AI coach can analyze your training and plan your week.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -294,6 +295,7 @@
 		000000000000000112000000 /* Release configuration for PBXNativeTarget "Stride" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Stride/Stride.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -303,7 +305,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts, sleep, heart rate, HRV and steps from Apple Health so the AI coach can analyze your training and plan your week.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV and steps from Apple Health so the AI coach can analyze your training and plan your week.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

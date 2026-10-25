@@ -53,6 +53,7 @@ nonisolated struct MetricsReport: Sendable {
     var workoutLoad: [UUID: Double]
     var workoutZone: [UUID: IntensityZone]
     var indicators: TrainingIndicators
+    var heartRateZones: HeartRateZones
 
     init(snapshot: HealthSnapshot, profile: UserProfile, calendar: Calendar = .current) {
         let today = calendar.startOfDay(for: snapshot.fetchedAt)
@@ -63,6 +64,7 @@ nonisolated struct MetricsReport: Sendable {
         var ind = TrainingIndicators()
         let recentRHR = snapshot.days.filter { $0.date >= start28 }.compactMap(\.restingHeartRate)
         ind.restingHRBaseline = Self.median(recentRHR) ?? 60
+        let zones = profile.heartRateZones(restingHR: ind.restingHRBaseline)
 
         var workoutLoad: [UUID: Double] = [:]
         var workoutZone: [UUID: IntensityZone] = [:]
@@ -70,7 +72,7 @@ nonisolated struct MetricsReport: Sendable {
         for workout in snapshot.workouts {
             let load = Self.trimp(workout, restingHR: ind.restingHRBaseline, maxHR: maxHR)
             workoutLoad[workout.id] = load
-            workoutZone[workout.id] = Self.zone(workout, maxHR: maxHR)
+            workoutZone[workout.id] = Self.zone(workout, zones: zones)
             dailyLoad[calendar.startOfDay(for: workout.start), default: 0] += load
         }
 
@@ -113,6 +115,7 @@ nonisolated struct MetricsReport: Sendable {
         self.workoutLoad = workoutLoad
         self.workoutZone = workoutZone
         self.indicators = ind
+        self.heartRateZones = zones
         self.weeks = Self.weeklySummaries(snapshot: snapshot, workoutLoad: workoutLoad, workoutZone: workoutZone)
     }
 
@@ -127,11 +130,12 @@ nonisolated struct MetricsReport: Sendable {
         return workout.durationMinutes * reserve * 0.64 * exp(1.92 * reserve)
     }
 
-    static func zone(_ workout: WorkoutSummary, maxHR: Double) -> IntensityZone {
+    /// Easy = average HR in Z1–2, moderate = Z3, hard = Z4–5.
+    static func zone(_ workout: WorkoutSummary, zones: HeartRateZones) -> IntensityZone {
         guard let avg = workout.averageHeartRate else { return .unknown }
-        switch avg / maxHR {
-        case ..<0.75: return .easy
-        case ..<0.85: return .moderate
+        switch zones.index(for: avg) {
+        case ...1: return .easy
+        case 2: return .moderate
         default: return .hard
         }
     }

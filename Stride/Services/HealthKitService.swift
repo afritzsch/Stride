@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import HealthKit
 
@@ -19,8 +20,15 @@ nonisolated struct HealthKitService: Sendable {
             HKQuantityType(.distanceWalkingRunning),
             HKQuantityType(.distanceCycling),
             HKQuantityType(.distanceSwimming),
+            HKQuantityType(.runningPower),
+            HKQuantityType(.runningStrideLength),
+            HKQuantityType(.runningVerticalOscillation),
+            HKQuantityType(.runningGroundContactTime),
+            HKQuantityType(.cyclingPower),
+            HKQuantityType(.cyclingCadence),
             HKCategoryType(.sleepAnalysis),
             HKObjectType.workoutType(),
+            HKSeriesType.workoutRoute(),
         ]
     }
 
@@ -175,10 +183,14 @@ nonisolated struct HealthKitService: Sendable {
         var summaries: [WorkoutSummary] = []
         for workout in workouts {
             let distanceTypes: [HKQuantityTypeIdentifier] = [.distanceWalkingRunning, .distanceCycling, .distanceSwimming]
+            // Workouts saved with HealthKit's older API only carry totals, which statistics(for:) may not report.
+            // `totalDistance`/`totalEnergyBurned` are deprecated, so read them by key to keep the fallback warning-free.
             let distance = distanceTypes
                 .compactMap { workout.statistics(for: HKQuantityType($0))?.sumQuantity()?.doubleValue(for: .meterUnit(with: .kilo)) }
                 .max()
+                ?? (workout.value(forKey: "totalDistance") as? HKQuantity)?.doubleValue(for: .meterUnit(with: .kilo))
             let energy = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?.sumQuantity()?.doubleValue(for: .kilocalorie())
+                ?? (workout.value(forKey: "totalEnergyBurned") as? HKQuantity)?.doubleValue(for: .kilocalorie())
 
             var heartRate = workout.statistics(for: HKQuantityType(.heartRate))
             if heartRate?.averageQuantity() == nil {
@@ -199,6 +211,107 @@ nonisolated struct HealthKitService: Sendable {
             ))
         }
         return summaries
+    }
+
+    // MARK: - Workout detail
+
+    func workoutDetail(for summary: WorkoutSummary) async throws -> WorkoutDetail {
+        WorkoutDetail.build(summary: summary, raw: try await rawWorkoutData(for: summary))
+    }
+
+    /// Raw samples around one workout, unprocessed, as used for the detail view and for debug exports.
+    func rawWorkoutData(for summary: WorkoutSummary) async throws -> RawWorkoutData {
+        let lookup = HKSampleQueryDescriptor(
+            predicates: [.workout(HKQuery.predicateForObject(with: summary.id))],
+            sortDescriptors: []
+        )
+        guard let workout = try await lookup.result(for: store).first else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let range = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate)
+        let isRun = workout.workoutActivityType == .running
+        let isRide = workout.workoutActivityType == .cycling
+
+        let metadata = workout.metadata ?? [:]
+        func quantity(_ key: String, _ unit: HKUnit) -> Double? {
+            (metadata[key] as? HKQuantity).flatMap { $0.is(compatibleWith: unit) ? $0.doubleValue(for: unit) : nil }
+        }
+
+        return RawWorkoutData(
+            workoutID: workout.uuid,
+            start: workout.startDate,
+            end: workout.endDate,
+            source: workout.sourceRevision.source.name,
+            heartRate: await rawSamples(.heartRate, unit: Self.bpm, in: range),
+            distance: summary.isFootSport ? await rawSamples(.distanceWalkingRunning, unit: .meter(), in: range) : [],
+            steps: summary.isFootSport ? await rawSamples(.stepCount, unit: .count(), in: range) : [],
+            elevationGainM: quantity(HKMetadataKeyElevationAscended, .meter()),
+            temperatureC: quantity(HKMetadataKeyWeatherTemperature, .degreeCelsius()),
+            humidityPercent: quantity(HKMetadataKeyWeatherHumidity, .percent()).map { $0 * 100 },
+            isIndoor: (metadata[HKMetadataKeyIndoorWorkout] as? NSNumber)?.boolValue,
+            powerW: isRun || isRide ? await statistic(isRun ? .runningPower : .cyclingPower, unit: .watt(), options: .discreteAverage, in: range) : nil,
+            cyclingCadence: isRide ? await statistic(.cyclingCadence, unit: Self.bpm, options: .discreteAverage, in: range) : nil,
+            strideLengthM: isRun ? await statistic(.runningStrideLength, unit: .meter(), options: .discreteAverage, in: range) : nil,
+            verticalOscillationCm: isRun ? await statistic(.runningVerticalOscillation, unit: .meterUnit(with: .centi), options: .discreteAverage, in: range) : nil,
+            groundContactMs: isRun ? await statistic(.runningGroundContactTime, unit: .secondUnit(with: .milli), options: .discreteAverage, in: range) : nil,
+            route: await route(for: workout)
+        )
+    }
+
+    /// GPS fixes of every route attached to the workout; empty when the source didn't share one.
+    private func route(for workout: HKWorkout) async -> [RoutePoint] {
+        let descriptor = HKSampleQueryDescriptor(
+            predicates: [.workoutRoute(HKQuery.predicateForObjects(from: workout))],
+            sortDescriptors: [SortDescriptor(\.startDate)]
+        )
+        var points: [RoutePoint] = []
+        for route in (try? await descriptor.result(for: store)) ?? [] {
+            do {
+                for try await location in HKWorkoutRouteQueryDescriptor(route).results(for: store) {
+                    points.append(RoutePoint(
+                        date: location.timestamp,
+                        latitude: location.coordinate.latitude,
+                        longitude: location.coordinate.longitude,
+                        altitudeM: location.verticalAccuracy >= 0 ? location.altitude : nil,
+                        accuracyM: location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil
+                    ))
+                }
+            } catch {
+                continue
+            }
+        }
+        return points
+    }
+
+    /// Exports what the app reads (summary data plus raw samples for every workout) for debugging.
+    func exportFixture() async throws -> HealthFixture {
+        let snapshot = try await fetchSnapshot()
+        var workouts: [RawWorkoutData] = []
+        for workout in snapshot.workouts {
+            if let raw = try? await rawWorkoutData(for: workout) { workouts.append(raw) }
+        }
+        return HealthFixture(exportedAt: .now, snapshot: snapshot, workouts: workouts)
+    }
+
+    private func rawSamples(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, in range: NSPredicate) async -> [RawSample] {
+        let descriptor = HKSampleQueryDescriptor(
+            predicates: [.quantitySample(type: HKQuantityType(identifier), predicate: range)],
+            sortDescriptors: [SortDescriptor(\.startDate)]
+        )
+        let samples = (try? await descriptor.result(for: store)) ?? []
+        return samples.map {
+            RawSample(start: $0.startDate, end: $0.endDate, value: $0.quantity.doubleValue(for: unit), source: $0.sourceRevision.source.name)
+        }
+    }
+
+    private func statistic(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, options: HKStatisticsOptions, in range: NSPredicate) async -> Double? {
+        let descriptor = HKStatisticsQueryDescriptor(
+            predicate: .quantitySample(type: HKQuantityType(identifier), predicate: range),
+            options: options
+        )
+        guard let statistics = try? await descriptor.result(for: store) else { return nil }
+        let quantity = options.contains(.cumulativeSum) ? statistics.sumQuantity() : statistics.averageQuantity()
+        return quantity?.doubleValue(for: unit)
     }
 
     private func heartRateStatistics(from start: Date, to end: Date) async -> HKStatistics? {

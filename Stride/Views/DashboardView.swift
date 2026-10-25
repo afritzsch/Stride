@@ -5,7 +5,9 @@ struct DashboardView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        NavigationStack {
+        @Bindable var model = model
+
+        NavigationStack(path: $model.dashboardPath) {
             ScrollView {
                 VStack(spacing: 16) {
                     if model.needsHealthAuthorization {
@@ -37,6 +39,12 @@ struct DashboardView: View {
                 .padding()
             }
             .navigationTitle("Dashboard")
+            .navigationDestination(for: DashboardDestination.self) { destination in
+                switch destination {
+                case .allWorkouts: WorkoutListView()
+                case .workout(let workout): WorkoutDetailView(workout: workout)
+                }
+            }
             .refreshable { await model.refresh() }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -222,36 +230,29 @@ private struct RecoveryChart: View {
 }
 
 private struct RecentWorkouts: View {
+    @Environment(AppModel.self) private var model
     var workouts: [WorkoutSummary]
     var metrics: MetricsReport
 
     var body: some View {
-        Card(title: "Recent workouts") {
+        Card {
+            HStack {
+                Text("Recent workouts").font(.headline)
+                Spacer()
+                NavigationLink("See all", value: DashboardDestination.allWorkouts)
+                    .font(.subheadline)
+            }
             if workouts.isEmpty {
                 Text("No workouts in the last 8 weeks.").font(.footnote).foregroundStyle(.secondary)
             }
             ForEach(workouts) { workout in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(workout.sport).font(.subheadline.bold())
-                        Text(workout.start.formatted(.dateTime.weekday().day().month()))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                NavigationLink(value: DashboardDestination.workout(workout)) {
+                    HStack {
+                        WorkoutRow(workout: workout, load: metrics.workoutLoad[workout.id], isReviewed: model.runAnalyses[workout.id] != nil)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text([
-                            "\(Int(workout.durationMinutes)) min",
-                            workout.distanceKm.map { "\(Format.number($0, digits: 1)) km" },
-                            workout.averageHeartRate.map { "\(Int($0)) bpm" },
-                        ].compactMap(\.self).joined(separator: " · "))
-                        .font(.caption)
-                        Text("Load \(Format.number(metrics.workoutLoad[workout.id]))")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .monospacedDigit()
                 }
+                .buttonStyle(.plain)
                 if workout.id != workouts.last?.id { Divider() }
             }
         }
