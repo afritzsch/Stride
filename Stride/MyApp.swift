@@ -1,9 +1,12 @@
 import SwiftUI
 
-@main struct MyApp: App {
+@main struct StrideApp: App {
+    @State private var model = AppModel()
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(model)
         }
     }
 }
