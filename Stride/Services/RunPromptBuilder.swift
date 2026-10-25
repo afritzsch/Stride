@@ -18,6 +18,8 @@ nonisolated struct RunPromptBuilder {
         Rules:
         - Work out the session's purpose from the plan, the athlete's note, or the structure of the splits and \
         heart rate, and judge it against that purpose.
+        - If a measured effort is given, it is computed from time in the athlete's zones: use it as the effort \
+        and never contradict it (don't call a hard session easy or lacking intensity).
         - Cite specific numbers: splits, pace, heart rate, time in zones, drift.
         - Use the athlete's heart-rate zones exactly as given (they match their watch); never assign zones from \
         % of max HR yourself.
@@ -71,6 +73,10 @@ nonisolated struct RunPromptBuilder {
         if zoneTotal > 0 {
             let shares = zones.enumerated().map { "Z\($0.offset + 1) \(Int(($0.element / zoneTotal * 100).rounded()))%" }
             lines.append("- Time in HR zones: \(shares.joined(separator: ", "))")
+        }
+        if let effort = EffortLevel.measured(zoneSeconds: zones, durationMinutes: workout.durationMinutes) {
+            let hard = Int(((zones[3] + zones[4]) / zoneTotal * 100).rounded())
+            lines.append("- Measured effort: \(effort.rawValue.uppercased()) (\(hard)% of the time in Z4–Z5 over \(WorkoutFormat.duration(workout.durationMinutes * 60)))")
         }
         if let decoupling = detail.decouplingPercent {
             lines.append("- Aerobic decoupling (pace:HR, 1st vs 2nd half): \(num(decoupling, 1))%")

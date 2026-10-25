@@ -250,12 +250,19 @@ final class AppModel {
             fullPrompt: prompt(compact: false),
             compactPrompt: prompt(compact: true)
         )
+        var analysis = result.output
+        if let measured = EffortLevel.measured(
+            zoneSeconds: detail.zoneSeconds(zones: metrics.heartRateZones),
+            durationMinutes: detail.summary.durationMinutes
+        ) {
+            analysis.effort = measured
+        }
         runAnalyses[detail.summary.id] = SavedRunAnalysis(
             workoutID: detail.summary.id,
             createdAt: .now,
             modelName: result.modelName,
             note: note,
-            analysis: result.output
+            analysis: analysis
         )
         JSONStore.save(Array(runAnalyses.values), to: JSONStore.runAnalyses)
         writeDebugState(detail: detail)
