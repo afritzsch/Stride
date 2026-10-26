@@ -50,12 +50,6 @@ nonisolated struct AppleAnalyzer {
     static let isPrivateCloudInBuild = false
     #endif
 
-    /// nil when at least one route can run, otherwise a user-facing reason.
-    static func unavailableReason(allowPrivateCloud: Bool) -> String? {
-        if allowPrivateCloud, privateCloudBlocker == nil { return nil }
-        return onDeviceBlocker
-    }
-
     static var onDeviceBlocker: String? {
         switch SystemLanguageModel.default.availability {
         case .available:
@@ -65,7 +59,7 @@ nonisolated struct AppleAnalyzer {
         case .unavailable(.appleIntelligenceNotEnabled):
             "Turn on Apple Intelligence in the Settings app."
         case .unavailable(.modelNotReady):
-            "The on-device model is still downloading. Try again later."
+            "Apple Intelligence is getting the on-device model ready (it downloads or updates it, e.g. after an iOS update). Try again in a few minutes."
         case .unavailable:
             "The on-device model is unavailable."
         }

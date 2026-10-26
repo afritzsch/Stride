@@ -31,7 +31,8 @@ final class CoachChat {
     func send(_ text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding, let model else { return }
-        if let blocker = AppleAnalyzer.onDeviceBlocker {
+        model.refreshModelAvailability()
+        if let blocker = model.onDeviceBlocker {
             error = blocker
             return
         }
@@ -77,7 +78,7 @@ final class CoachChat {
 
     /// Loads the model while the athlete is typing.
     func prewarm() {
-        guard let model, AppleAnalyzer.onDeviceBlocker == nil, session == nil else { return }
+        guard let model, model.onDeviceBlocker == nil, session == nil else { return }
         let session = makeSession(model: model)
         session.prewarm()
         self.session = session
