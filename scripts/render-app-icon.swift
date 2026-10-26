@@ -81,9 +81,13 @@ func render(_ variant: Variant, to path: String) {
     let image = ctx.makeImage()!
     let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)!
     CGImageDestinationAddImage(dest, image, nil)
-    CGImageDestinationFinalize(dest)
+    guard CGImageDestinationFinalize(dest) else { fatalError("Couldn't write \(path)") }
 }
 
+guard CommandLine.arguments.count > 1 else {
+    print("usage: render-app-icon.swift <AppIcon.appiconset>")
+    exit(1)
+}
 let out = CommandLine.arguments[1]
 render(.light, to: "\(out)/AppIcon.png")
 render(.dark, to: "\(out)/AppIcon-Dark.png")

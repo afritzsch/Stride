@@ -17,8 +17,7 @@ struct AnalysisView: View {
                         } label: {
                             Label("Past analyses (\(model.history.count - 1))", systemImage: "clock.arrow.circlepath")
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding()
-                                .background(.background.secondary, in: .rect(cornerRadius: 16))
+                                .cardBackground()
                         }
                     }
                 }
@@ -45,34 +44,20 @@ private struct RunAnalysisCard: View {
                 }
             }
 
-            if model.isAnalyzing {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text(model.engine == .claude ? "Claude is reviewing 8 weeks of data. This can take a minute…" : "Apple Intelligence is analyzing your data…")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                Button {
-                    Task { await model.runAnalysis() }
-                } label: {
-                    Label(model.latestAnalysis == nil ? "Analyze my data" : "Run a new analysis", systemImage: "wand.and.stars")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(model.snapshot == nil || model.engineBlocker != nil)
+            AnalyzeControls(
+                isRunning: model.isAnalyzing,
+                runningText: model.engine == .claude
+                    ? "Claude is reviewing \(HealthKitService.windowWeeks) weeks of data. This can take a minute…"
+                    : "Apple Intelligence is analyzing your data…",
+                buttonTitle: model.latestAnalysis == nil ? "Analyze my data" : "Run a new analysis",
+                isDisabled: model.snapshot == nil,
+                notice: model.analysisNotice,
+                error: model.analysisError
+            ) {
+                Task { await model.runAnalysis() }
             }
-
-            if let blocker = model.engineBlocker {
-                Text(blocker).font(.footnote).foregroundStyle(.orange)
-            } else if model.snapshot == nil {
+            if model.snapshot == nil, model.engineBlocker == nil {
                 Text("Connect Apple Health on the Dashboard first.").font(.footnote).foregroundStyle(.secondary)
-            }
-            if let notice = model.analysisNotice {
-                Text(notice).font(.footnote).foregroundStyle(.secondary)
-            }
-            if let error = model.analysisError {
-                Text(error).font(.footnote).foregroundStyle(.red)
             }
         }
     }
@@ -151,12 +136,13 @@ struct ReportContent: View {
     }
 }
 
+/// Analyses before the latest one, which the Coach tab already shows.
 private struct HistoryList: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         List {
-            ForEach(model.history) { analysis in
+            ForEach(model.history.dropFirst()) { analysis in
                 NavigationLink {
                     ScrollView {
                         VStack(spacing: 16) {
@@ -175,7 +161,7 @@ private struct HistoryList: View {
                     }
                 }
             }
-            .onDelete { model.deleteAnalyses(at: $0) }
+            .onDelete { offsets in model.deleteAnalyses(at: IndexSet(offsets.map { $0 + 1 })) }
         }
         .navigationTitle("Past analyses")
     }

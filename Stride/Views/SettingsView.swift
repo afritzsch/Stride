@@ -28,7 +28,7 @@ struct SettingsView: View {
                             model.apiKey = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                             apiKeyDraft = ""
                         }
-                        .disabled(apiKeyDraft.isEmpty)
+                        .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if !model.apiKey.isEmpty {
                             LabeledContent("Saved key", value: "••••" + model.apiKey.suffix(4))
                             Button("Remove key", role: .destructive) { model.apiKey = "" }
@@ -49,7 +49,7 @@ struct SettingsView: View {
                 } footer: {
                     switch model.engine {
                     case .claude:
-                        Text("Uses Claude Opus 5.5 with your own key from [platform.claude.com](https://platform.claude.com). A summary of your health data is sent to Anthropic for each analysis. The key is stored in the Keychain.")
+                        Text("Uses \(ClaudeAnalyzer.displayName) with your own key from [platform.claude.com](https://platform.claude.com). A summary of your health data is sent to Anthropic for each analysis. The key is stored in the Keychain.")
                     case .apple:
                         if AppleAnalyzer.isPrivateCloudInBuild {
                             Text("Free, no API key. With Private Cloud Compute on, Apple's larger server model runs the analysis; Apple doesn't store your data. It has a usage limit, and when you reach it or are offline, the smaller on-device model takes over. Turn it off to keep everything on your iPhone.")
@@ -151,7 +151,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Data")
                 } footer: {
-                    Text("The debug export contains your raw health data for the last 8 weeks. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
+                    Text("The debug export contains your raw health data for the last \(HealthKitService.windowWeeks) weeks. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
                 }
             }
             .navigationTitle("Settings")
@@ -162,22 +162,18 @@ struct SettingsView: View {
 private struct HeartRateZonesSection: View {
     @Environment(AppModel.self) private var model
 
-    private var zones: HeartRateZones {
-        model.metrics?.heartRateZones ?? model.profile.heartRateZones(restingHR: 60)
-    }
-
     var body: some View {
         @Bindable var model = model
         Section {
             Picker("Zones based on", selection: $model.profile.zoneMethod) {
                 ForEach(HeartRateZoneMethod.allCases) { Text($0.title).tag($0) }
             }
-            .onChange(of: model.profile.zoneMethod) { _, method in
-                // Start custom zones from the ones currently shown, so only the differences need typing.
-                if method == .custom, model.profile.customZoneFloors.count != 4 {
-                    model.profile.customZoneFloors = model.profile.heartRateZones(restingHR: model.metrics?.indicators.restingHRBaseline ?? 60)
-                        .floors.map { Int($0.rounded()) }
-                }
+            .onChange(of: model.profile.zoneMethod) { old, method in
+                // Start custom zones from the ones shown before the switch, so only the differences need typing.
+                guard method == .custom, model.profile.customZoneFloors.count != 4 else { return }
+                var previous = model.profile
+                previous.zoneMethod = old
+                model.profile.customZoneFloors = previous.heartRateZones(restingHR: model.restingHRBaseline).floors.map { Int($0.rounded()) }
             }
             if model.profile.zoneMethod == .custom, model.profile.customZoneFloors.count == 4 {
                 ForEach(0..<4, id: \.self) { index in
@@ -188,7 +184,7 @@ private struct HeartRateZonesSection: View {
                     }
                 }
             }
-            ForEach(Array(zones.ranges.enumerated()).reversed(), id: \.offset) { index, range in
+            ForEach(Array(model.heartRateZones.ranges.enumerated()).reversed(), id: \.offset) { index, range in
                 LabeledContent("Zone \(index + 1)", value: "\(range) bpm")
                     .foregroundStyle(.secondary)
             }
@@ -199,9 +195,9 @@ private struct HeartRateZonesSection: View {
             case .maxHeartRate:
                 Text("Garmin's default: zones start at 60, 70, 80 and 90% of max HR. If your watch shows different zones, set your max HR above, or pick Custom and copy the zones from Garmin Connect.")
             case .heartRateReserve:
-                Text("Percentages of the range between resting HR (your 28-day median, \(Int(model.metrics?.indicators.restingHRBaseline ?? 60)) bpm) and max HR.")
+                Text("Percentages of the range between resting HR (your 28-day median, \(Int(model.restingHRBaseline)) bpm) and max HR.")
             case .custom:
-                if model.profile.customZoneFloors != model.profile.customZoneFloors.sorted() {
+                if !model.profile.hasValidCustomZones {
                     Text("Each zone has to start above the one before it. Until then, % of max HR zones are used.").foregroundStyle(.orange)
                 } else {
                     Text("Copy the zones from Garmin Connect (heart rate zones in your user settings), entering where each zone starts.")

@@ -14,7 +14,7 @@ struct DashboardView: View {
                         ConnectHealthCard()
                     }
                     if let error = model.healthError {
-                        Card { Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                        ErrorCard(message: error)
                     }
                     if let snapshot = model.snapshot, let metrics = model.metrics {
                         if snapshot.isDemo {
@@ -30,7 +30,7 @@ struct DashboardView: View {
                             WeeklyLoadChart(weeks: metrics.weeks)
                             SleepChart(nights: Array(snapshot.sleep.suffix(28)), target: model.profile.sleepTargetHours)
                             RecoveryChart(days: Array(snapshot.days.suffix(28)))
-                            RecentWorkouts(workouts: Array(snapshot.workouts.suffix(8).reversed()), metrics: metrics)
+                            RecentWorkouts(workouts: Array(snapshot.workouts.suffix(8).reversed()))
                         }
                     } else if model.isLoadingHealth {
                         ProgressView("Reading Apple Health…").padding(.top, 60)
@@ -86,7 +86,7 @@ private struct ConnectHealthCard: View {
 private struct NoDataCard: View {
     var body: some View {
         Card(title: "No data yet") {
-            Text("Apple Health has no workouts, sleep, or heart rate for the last 8 weeks. Check that your watch's app is syncing to Apple Health, and that this app has read access under Settings → Health → Data Access & Devices.")
+            Text("Apple Health has no workouts, sleep, or heart rate for the last \(HealthKitService.windowWeeks) weeks. Check that your watch's app is syncing to Apple Health, and that this app has read access under Settings → Health → Data Access & Devices.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -98,6 +98,8 @@ private struct IndicatorGrid: View {
     var profile: UserProfile
 
     private var ind: TrainingIndicators { metrics.indicators }
+    /// Nights within this many hours of the sleep target count as on target.
+    static let sleepTolerance = 0.25
 
     private var acwrTint: Color {
         guard let acwr = ind.acwr else { return .gray }
@@ -129,18 +131,18 @@ private struct IndicatorGrid: View {
                 value: Format.hours(ind.sleep7),
                 caption: ind.bedtimeSDMinutes.map { "Bedtime varies ±\(Int($0)) min" },
                 systemImage: "bed.double.fill",
-                tint: (ind.sleep7 ?? 0) >= profile.sleepTargetHours - 0.25 ? .indigo : .orange
+                tint: ind.sleep7.map { $0 >= profile.sleepTargetHours - Self.sleepTolerance ? .indigo : .orange } ?? .gray
             )
             MetricTile(
                 title: "Resting HR",
-                value: "\(Format.number(ind.restingHR7)) bpm",
+                value: ind.restingHR7.map { "\(Format.number($0)) bpm" } ?? "–",
                 caption: Format.delta(ind.restingHR7, ind.restingHR28, unit: " bpm"),
                 systemImage: "heart.fill",
                 tint: .red
             )
             MetricTile(
                 title: "HRV",
-                value: "\(Format.number(ind.hrv7)) ms",
+                value: ind.hrv7.map { "\(Format.number($0)) ms" } ?? "–",
                 caption: Format.delta(ind.hrv7, ind.hrv28, unit: " ms"),
                 systemImage: "waveform.path.ecg",
                 tint: .pink
@@ -191,7 +193,7 @@ private struct SleepChart: View {
                         x: .value("Night", night.date, unit: .day),
                         y: .value("Hours", night.asleepHours)
                     )
-                    .foregroundStyle(night.asleepHours >= target - 0.25 ? Color.indigo.gradient : Color.orange.gradient)
+                    .foregroundStyle(night.asleepHours >= target - IndicatorGrid.sleepTolerance ? Color.indigo.gradient : Color.orange.gradient)
                 }
                 RuleMark(y: .value("Target", target))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
@@ -230,9 +232,7 @@ private struct RecoveryChart: View {
 }
 
 private struct RecentWorkouts: View {
-    @Environment(AppModel.self) private var model
     var workouts: [WorkoutSummary]
-    var metrics: MetricsReport
 
     var body: some View {
         Card {
@@ -243,13 +243,13 @@ private struct RecentWorkouts: View {
                     .font(.subheadline)
             }
             if workouts.isEmpty {
-                Text("No workouts in the last 8 weeks.").font(.footnote).foregroundStyle(.secondary)
+                Text("No workouts in the last \(HealthKitService.windowWeeks) weeks.").font(.footnote).foregroundStyle(.secondary)
             }
             ForEach(workouts) { workout in
                 NavigationLink(value: DashboardDestination.workout(workout)) {
                     HStack {
-                        WorkoutRow(workout: workout, load: metrics.workoutLoad[workout.id], isReviewed: model.runAnalyses[workout.id] != nil)
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                        WorkoutRow(workout: workout)
+                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary).accessibilityHidden(true)
                     }
                 }
                 .buttonStyle(.plain)

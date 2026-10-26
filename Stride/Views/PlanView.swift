@@ -26,11 +26,12 @@ struct WeekPlanList: View {
     var analysis: SavedAnalysis
 
     private var totalMinutes: Int { analysis.report.weekPlan.map(\.durationMinutes).reduce(0, +) }
+    private var sessionCount: Int { analysis.report.weekPlan.filter { $0.intensity != .rest }.count }
 
     var body: some View {
         VStack(spacing: 12) {
             HStack {
-                Text("Planned: \(Format.hours(Double(totalMinutes) / 60)) over \(analysis.report.weekPlan.filter { $0.intensity != .rest }.count) sessions")
+                Text("From \(analysis.planStartDate.formatted(date: .abbreviated, time: .omitted)): \(Format.hours(Double(totalMinutes) / 60)) over ^[\(sessionCount) session](inflect: true)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -65,8 +66,7 @@ private struct PlannedDayRow: View {
                 Text(day.details).font(.footnote).foregroundStyle(.secondary)
             }
         }
-        .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: .rect(cornerRadius: 16))
+        .cardBackground()
     }
 }

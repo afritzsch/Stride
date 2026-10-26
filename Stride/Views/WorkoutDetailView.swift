@@ -9,13 +9,11 @@ struct WorkoutDetailView: View {
     @State private var detail: WorkoutDetail?
     @State private var loadError: String?
     @State private var note = ""
-    @State private var isAnalyzing = false
     @State private var analysisError: String?
     @State private var notice: String?
 
-    private var zones: HeartRateZones {
-        model.metrics?.heartRateZones ?? model.profile.heartRateZones(restingHR: 60)
-    }
+    private var zones: HeartRateZones { model.heartRateZones }
+    private var isAnalyzing: Bool { model.analyzingWorkoutIDs.contains(workout.id) }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -26,7 +24,7 @@ struct WorkoutDetailView: View {
                     if let detail {
                         if !detail.dataNotes.isEmpty {
                             Card {
-                                ForEach(detail.dataNotes, id: \.self) { note in
+                                ForEach(Array(detail.dataNotes.enumerated()), id: \.offset) { _, note in
                                     Label(note, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary)
                                 }
                             }
@@ -48,7 +46,7 @@ struct WorkoutDetailView: View {
                             SplitsCard(splits: detail.splits, decoupling: detail.decouplingPercent).id("splits")
                         }
                     } else if let loadError {
-                        Card { Label(loadError, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+                        ErrorCard(message: loadError)
                     } else {
                         ProgressView().padding()
                     }
@@ -63,11 +61,12 @@ struct WorkoutDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .task {
                 await load()
-                if let target = model.launchScrollTarget {
+                let hooks = model.consumeLaunchHooks()
+                if let target = hooks.scrollTarget {
                     try? await Task.sleep(for: .milliseconds(300))
                     proxy.scrollTo(target, anchor: .top)
                 }
-                if model.launchAnalyze, model.runAnalyses[workout.id] == nil {
+                if hooks.analyze, model.runAnalyses[workout.id] == nil {
                     await analyze()
                 }
             }
@@ -96,32 +95,15 @@ struct WorkoutDetailView: View {
             TextField("How did it feel? What was the plan? (optional)", text: $note, axis: .vertical)
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
-            if isAnalyzing {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Reviewing your session…").font(.footnote).foregroundStyle(.secondary)
-                }
-            } else {
-                Button {
-                    Task { await analyze() }
-                } label: {
-                    Label(
-                        model.runAnalyses[workout.id] == nil ? "Analyze this \(workout.sport.lowercased())" : "Analyze again",
-                        systemImage: "wand.and.stars"
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(detail == nil || model.engineBlocker != nil)
-            }
-            if let blocker = model.engineBlocker {
-                Text(blocker).font(.footnote).foregroundStyle(.orange)
-            }
-            if let notice {
-                Text(notice).font(.footnote).foregroundStyle(.secondary)
-            }
-            if let analysisError {
-                Text(analysisError).font(.footnote).foregroundStyle(.red)
+            AnalyzeControls(
+                isRunning: isAnalyzing,
+                runningText: "Reviewing your session…",
+                buttonTitle: model.runAnalyses[workout.id] == nil ? "Analyze this \(workout.sport.lowercased())" : "Analyze again",
+                isDisabled: detail == nil,
+                notice: notice,
+                error: analysisError
+            ) {
+                Task { await analyze() }
             }
         }
     }
@@ -143,8 +125,6 @@ struct WorkoutDetailView: View {
         guard let detail else { return }
         analysisError = nil
         notice = nil
-        isAnalyzing = true
-        defer { isAnalyzing = false }
         do {
             notice = try await model.analyzeWorkout(detail, note: note)
             if let notice { model.debugLog("Run analysis notice: \(notice)") }
@@ -167,7 +147,7 @@ private struct StatGrid: View {
         if let km = workout.distanceKm {
             items.append(("Distance", "\(Format.number(km, digits: 2)) km"))
             if workout.isFootSport {
-                items.append(("Avg pace", "\(WorkoutFormat.pace(workout.durationMinutes * 60 / km)) /km"))
+                items.append(("Avg pace", "\(WorkoutFormat.pace(workout.paceSecondsPerKm)) /km"))
             } else {
                 items.append(("Avg speed", "\(Format.number(km / (workout.durationMinutes / 60), digits: 1)) km/h"))
             }
@@ -199,10 +179,10 @@ private struct StatGrid: View {
                     Text(value).font(.headline).monospacedDigit()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
             }
         }
-        .padding()
-        .background(.background.secondary, in: .rect(cornerRadius: 16))
+        .cardBackground()
     }
 }
 
@@ -289,7 +269,7 @@ private struct RouteMap: View {
         Map(initialPosition: .automatic, interactionModes: interactive ? .all : []) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 MapPolyline(coordinates: segment.coordinates)
-                    .stroke(Self.zoneColors[segment.zone], style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                    .stroke(Color.heartRateZone(segment.zone), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
             }
             if let first = route.first {
                 Marker("Start", systemImage: "play.fill", coordinate: first.coordinate).tint(.green)
@@ -301,16 +281,14 @@ private struct RouteMap: View {
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
     }
 
-    private static let zoneColors: [Color] = [.gray, .blue, .green, .orange, .red, .accentColor]
-
-    /// Consecutive stretches of the route in the same heart-rate zone (index 5 when there's no reading nearby).
-    private var segments: [(zone: Int, coordinates: [CLLocationCoordinate2D])] {
-        var segments: [(zone: Int, coordinates: [CLLocationCoordinate2D])] = []
+    /// Consecutive stretches of the route in the same heart-rate zone (nil when there's no reading nearby).
+    private var segments: [(zone: Int?, coordinates: [CLLocationCoordinate2D])] {
+        var segments: [(zone: Int?, coordinates: [CLLocationCoordinate2D])] = []
         var hrIndex = 0
         for point in route {
             while hrIndex + 1 < heartRate.count, heartRate[hrIndex + 1].date <= point.date { hrIndex += 1 }
             let reading = heartRate.indices.contains(hrIndex) ? heartRate[hrIndex] : nil
-            let zone = reading.flatMap { abs($0.date.timeIntervalSince(point.date)) <= 300 ? zones.index(for: $0.value) : nil } ?? 5
+            let zone = reading.flatMap { abs($0.date.timeIntervalSince(point.date)) <= WorkoutDetail.maxHeartRateGapSeconds ? zones.index(for: $0.value) : nil }
             if let last = segments.last, last.zone == zone {
                 segments[segments.count - 1].coordinates.append(point.coordinate)
             } else {
@@ -331,8 +309,6 @@ private struct ZoneBreakdown: View {
     var seconds: [Double]
     var zones: HeartRateZones
 
-    private static let colors: [Color] = [.gray, .blue, .green, .orange, .red]
-
     var body: some View {
         let total = max(seconds.reduce(0, +), 1)
         Card(title: "Time in heart rate zones") {
@@ -341,7 +317,7 @@ private struct ZoneBreakdown: View {
                     Text("Z\(index + 1)").font(.caption.bold()).frame(width: 24, alignment: .leading)
                     GeometryReader { proxy in
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(Self.colors[index].gradient)
+                            .fill(Color.heartRateZone(index).gradient)
                             .frame(width: max(2, proxy.size.width * value / total))
                     }
                     .frame(height: 14)
@@ -415,18 +391,6 @@ private struct SplitsCard: View {
 
 // MARK: - Analysis
 
-extension EffortLevel {
-    var color: Color {
-        switch self {
-        case .recovery: .gray
-        case .easy: .green
-        case .moderate: .blue
-        case .hard: .orange
-        case .maximal: .red
-        }
-    }
-}
-
 private struct RunAnalysisContent: View {
     var saved: SavedRunAnalysis
 
@@ -451,14 +415,14 @@ private struct RunAnalysisContent: View {
                 }
             }
             Card(title: "What went well") {
-                ForEach(analysis.highlights, id: \.self) { item in
+                ForEach(Array(analysis.highlights.enumerated()), id: \.offset) { _, item in
                     Label(item, systemImage: "checkmark.circle.fill")
                         .font(.subheadline)
                         .symbolRenderingMode(.multicolor)
                 }
             }
             Card(title: "Do differently") {
-                ForEach(analysis.improvements, id: \.self) { item in
+                ForEach(Array(analysis.improvements.enumerated()), id: \.offset) { _, item in
                     Label(item, systemImage: "arrow.up.right.circle.fill")
                         .font(.subheadline)
                         .foregroundStyle(.primary, .orange)

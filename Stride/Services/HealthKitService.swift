@@ -7,6 +7,8 @@ nonisolated struct HealthKitService: Sendable {
     private let store = HKHealthStore()
 
     static var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
+    /// How much history the app reads and analyzes.
+    static let windowWeeks = 8
 
     private static let bpm = HKUnit.count().unitDivided(by: .minute())
 
@@ -42,7 +44,7 @@ nonisolated struct HealthKitService: Sendable {
         try await store.requestAuthorization(toShare: [], read: readTypes)
     }
 
-    func fetchSnapshot(days: Int = 56, calendar: Calendar = .current) async throws -> HealthSnapshot {
+    func fetchSnapshot(days: Int = windowWeeks * 7, calendar: Calendar = .current) async throws -> HealthSnapshot {
         let now = Date()
         let today = calendar.startOfDay(for: now)
         guard let start = calendar.date(byAdding: .day, value: -(days - 1), to: today) else {
@@ -116,10 +118,14 @@ nonisolated struct HealthKitService: Sendable {
         )
         let samples = try await descriptor.result(for: store)
 
-        // Ignore daytime naps so they don't get merged into the night.
+        // Ignore daytime naps so they don't get merged into the night, but keep a lie-in that runs past 10:00:
+        // a daytime sample counts when it continues the sleep before it.
+        var lastEnd = Date.distantPast
         let nightSamples = samples.filter {
             let hour = calendar.component(.hour, from: $0.startDate)
-            return hour < 10 || hour >= 18
+            let isNight = hour < 10 || hour >= 18 || $0.startDate <= lastEnd.addingTimeInterval(30 * 60)
+            if isNight { lastEnd = max(lastEnd, $0.endDate) }
+            return isNight
         }
         // Shift by 12h so a night that starts at 23:00 or 01:00 lands on the wake-up day.
         let nights = Dictionary(grouping: nightSamples) {
@@ -249,11 +255,11 @@ nonisolated struct HealthKitService: Sendable {
             temperatureC: quantity(HKMetadataKeyWeatherTemperature, .degreeCelsius()),
             humidityPercent: quantity(HKMetadataKeyWeatherHumidity, .percent()).map { $0 * 100 },
             isIndoor: (metadata[HKMetadataKeyIndoorWorkout] as? NSNumber)?.boolValue,
-            powerW: isRun || isRide ? await statistic(isRun ? .runningPower : .cyclingPower, unit: .watt(), options: .discreteAverage, in: range) : nil,
-            cyclingCadence: isRide ? await statistic(.cyclingCadence, unit: Self.bpm, options: .discreteAverage, in: range) : nil,
-            strideLengthM: isRun ? await statistic(.runningStrideLength, unit: .meter(), options: .discreteAverage, in: range) : nil,
-            verticalOscillationCm: isRun ? await statistic(.runningVerticalOscillation, unit: .meterUnit(with: .centi), options: .discreteAverage, in: range) : nil,
-            groundContactMs: isRun ? await statistic(.runningGroundContactTime, unit: .secondUnit(with: .milli), options: .discreteAverage, in: range) : nil,
+            powerW: isRun || isRide ? await average(isRun ? .runningPower : .cyclingPower, unit: .watt(), in: range) : nil,
+            cyclingCadence: isRide ? await average(.cyclingCadence, unit: Self.bpm, in: range) : nil,
+            strideLengthM: isRun ? await average(.runningStrideLength, unit: .meter(), in: range) : nil,
+            verticalOscillationCm: isRun ? await average(.runningVerticalOscillation, unit: .meterUnit(with: .centi), in: range) : nil,
+            groundContactMs: isRun ? await average(.runningGroundContactTime, unit: .secondUnit(with: .milli), in: range) : nil,
             route: await route(for: workout)
         )
     }
@@ -304,14 +310,12 @@ nonisolated struct HealthKitService: Sendable {
         }
     }
 
-    private func statistic(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, options: HKStatisticsOptions, in range: NSPredicate) async -> Double? {
+    private func average(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, in range: NSPredicate) async -> Double? {
         let descriptor = HKStatisticsQueryDescriptor(
             predicate: .quantitySample(type: HKQuantityType(identifier), predicate: range),
-            options: options
+            options: .discreteAverage
         )
-        guard let statistics = try? await descriptor.result(for: store) else { return nil }
-        let quantity = options.contains(.cumulativeSum) ? statistics.sumQuantity() : statistics.averageQuantity()
-        return quantity?.doubleValue(for: unit)
+        return try? await descriptor.result(for: store)?.averageQuantity()?.doubleValue(for: unit)
     }
 
     private func heartRateStatistics(from start: Date, to end: Date) async -> HKStatistics? {
