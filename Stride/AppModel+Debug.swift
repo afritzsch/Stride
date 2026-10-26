@@ -187,6 +187,8 @@ extension AppModel {
             state["coachTools"] = [
                 "recentDays": toolbox.recentDays(7),
                 "workouts": toolbox.workouts(days: 14, sport: "running"),
+                "trends": toolbox.trends(),
+                "raceForecast": toolbox.raceForecast(distance: "Half marathon", month: 4),
                 "plan": toolbox.plan(),
             ]
         }
