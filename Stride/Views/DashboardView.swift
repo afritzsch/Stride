@@ -30,6 +30,9 @@ struct DashboardView: View {
                             WeeklyLoadChart(weeks: metrics.weeks)
                             SleepChart(nights: Array(snapshot.sleep.suffix(28)), target: model.profile.sleepTargetHours)
                             RecoveryChart(days: Array(snapshot.days.suffix(28)))
+                            if metrics.indicators.latestWeightKg != nil {
+                                WeightChart(days: snapshot.days.filter { $0.bodyMassKg != nil }, indicators: metrics.indicators)
+                            }
                             RecentWorkouts(workouts: Array(snapshot.workouts.suffix(8).reversed()))
                         }
                     } else if model.isLoadingHealth {
@@ -227,6 +230,50 @@ private struct RecoveryChart: View {
             .chartForegroundStyleScale(["Resting HR (bpm)": Color.red, "HRV (ms)": Color.pink.opacity(0.6)])
             .chartLegend(position: .bottom)
             .frame(height: 180)
+        }
+    }
+}
+
+private struct WeightChart: View {
+    var days: [DailyMetrics]
+    var indicators: TrainingIndicators
+
+    /// Pad the axis so day-to-day noise isn't stretched across the whole chart height.
+    private var yDomain: ClosedRange<Double> {
+        let values = days.compactMap(\.bodyMassKg)
+        let low = values.min() ?? 0, high = values.max() ?? 0
+        let padding = max(1, (high - low) * 0.2)
+        return (low - padding).rounded(.down)...(high + padding).rounded(.up)
+    }
+
+    var body: some View {
+        Card(title: "Weight, 8 weeks") {
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(Format.number(indicators.latestWeightKg, digits: 1)) kg")
+                    .font(.title2.bold())
+                    .monospacedDigit()
+                if let date = indicators.latestWeightDate {
+                    Text(date, format: .dateTime.day().month(.abbreviated))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if let delta = Format.delta(indicators.weight7, indicators.weight28, unit: " kg", digits: 1) {
+                    Text(delta).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Chart(days) { day in
+                if let kg = day.bodyMassKg {
+                    LineMark(x: .value("Day", day.date, unit: .day), y: .value("Weight", kg))
+                        .foregroundStyle(.teal)
+                        .interpolationMethod(.catmullRom)
+                    PointMark(x: .value("Day", day.date, unit: .day), y: .value("Weight", kg))
+                        .foregroundStyle(.teal)
+                        .symbolSize(16)
+                }
+            }
+            .chartYScale(domain: yDomain)
+            .frame(height: 160)
         }
     }
 }

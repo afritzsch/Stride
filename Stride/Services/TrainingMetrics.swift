@@ -15,6 +15,7 @@ nonisolated struct WeeklySummary: Identifiable, Hashable, Sendable {
     var avgSteps: Double?
     var avgRestingHR: Double?
     var avgHRV: Double?
+    var avgWeightKg: Double?
 
     var id: Date { weekStart }
 }
@@ -41,6 +42,11 @@ nonisolated struct TrainingIndicators: Sendable {
     var hrv28: Double?
     var steps7: Double?
     var steps28: Double?
+    /// Most recent weigh-in in the window.
+    var latestWeightKg: Double?
+    var latestWeightDate: Date?
+    var weight7: Double?
+    var weight28: Double?
 
     /// Training minutes per zone over the last 28 days.
     var zoneMinutes28: [IntensityZone: Double] = [:]
@@ -103,6 +109,12 @@ nonisolated struct MetricsReport: Sendable {
         ind.hrv28 = Self.mean(days28.compactMap(\.hrvMs))
         ind.steps7 = Self.mean(days7.compactMap(\.steps))
         ind.steps28 = Self.mean(days28.compactMap(\.steps))
+        if let latest = snapshot.days.last(where: { $0.bodyMassKg != nil }) {
+            ind.latestWeightKg = latest.bodyMassKg
+            ind.latestWeightDate = latest.date
+        }
+        ind.weight7 = Self.mean(days7.compactMap(\.bodyMassKg))
+        ind.weight28 = Self.mean(days28.compactMap(\.bodyMassKg))
         ind.sleep7 = Self.mean(snapshot.sleep.filter { $0.date >= start7 }.map(\.asleepHours))
         ind.sleep28 = Self.mean(snapshot.sleep.filter { $0.date >= start28 }.map(\.asleepHours))
         ind.bedtimeSDMinutes = Self.standardDeviation(
@@ -171,6 +183,7 @@ nonisolated struct MetricsReport: Sendable {
             weeks[key]?.avgSteps = mean(days.compactMap(\.steps))
             weeks[key]?.avgRestingHR = mean(days.compactMap(\.restingHeartRate))
             weeks[key]?.avgHRV = mean(days.compactMap(\.hrvMs))
+            weeks[key]?.avgWeightKg = mean(days.compactMap(\.bodyMassKg))
             weeks[key]?.avgSleepHours = mean((sleepByWeek[key] ?? []).map(\.asleepHours))
         }
         return weeks.values.sorted { $0.weekStart < $1.weekStart }

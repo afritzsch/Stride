@@ -8,6 +8,8 @@ nonisolated struct DailyMetrics: Codable, Hashable, Identifiable, Sendable {
     var activeEnergyKcal: Double?
     var restingHeartRate: Double?
     var hrvMs: Double?
+    /// Average of the day's weigh-ins; most days have none.
+    var bodyMassKg: Double?
 
     var id: Date { date }
 }

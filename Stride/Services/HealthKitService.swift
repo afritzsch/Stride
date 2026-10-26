@@ -19,6 +19,7 @@ nonisolated struct HealthKitService: Sendable {
             HKQuantityType(.restingHeartRate),
             HKQuantityType(.heartRate),
             HKQuantityType(.heartRateVariabilitySDNN),
+            HKQuantityType(.bodyMass),
             HKQuantityType(.distanceWalkingRunning),
             HKQuantityType(.distanceCycling),
             HKQuantityType(.distanceSwimming),
@@ -55,10 +56,11 @@ nonisolated struct HealthKitService: Sendable {
         async let energy = dailyValues(.activeEnergyBurned, unit: .kilocalorie(), options: .cumulativeSum, from: start, to: now)
         async let restingHR = dailyValues(.restingHeartRate, unit: Self.bpm, options: .discreteAverage, from: start, to: now)
         async let hrv = dailyValues(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), options: .discreteAverage, from: start, to: now)
+        async let bodyMass = dailyValues(.bodyMass, unit: .gramUnit(with: .kilo), options: .discreteAverage, from: start, to: now)
         async let sleep = sleepNights(from: start.addingTimeInterval(-12 * 3600), to: now, calendar: calendar)
         async let workouts = workouts(from: start, to: now)
 
-        let (stepsByDay, energyByDay, rhrByDay, hrvByDay) = await (steps, energy, restingHR, hrv)
+        let (stepsByDay, energyByDay, rhrByDay, hrvByDay, massByDay) = await (steps, energy, restingHR, hrv, bodyMass)
         var dailyMetrics: [DailyMetrics] = []
         var day = start
         while day <= today {
@@ -67,7 +69,8 @@ nonisolated struct HealthKitService: Sendable {
                 steps: stepsByDay[day],
                 activeEnergyKcal: energyByDay[day],
                 restingHeartRate: rhrByDay[day],
-                hrvMs: hrvByDay[day]
+                hrvMs: hrvByDay[day],
+                bodyMassKg: massByDay[day]
             ))
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
             day = next

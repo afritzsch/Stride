@@ -133,6 +133,7 @@ extension AppModel {
                 "acuteLoad": round(ind.acuteLoad, 0), "chronicLoad": round(ind.chronicLoad, 0), "acwr": round(ind.acwr, 2),
                 "sleep7": round(ind.sleep7), "restingHR7": round(ind.restingHR7), "restingHR28": round(ind.restingHR28),
                 "hrv7": round(ind.hrv7), "hrv28": round(ind.hrv28), "steps7": round(ind.steps7, 0),
+                "latestWeightKg": round(ind.latestWeightKg, 1), "weight7": round(ind.weight7, 1), "weight28": round(ind.weight28, 1),
             ]
             state["workouts"] = (snapshot?.workouts ?? []).reversed().prefix(25).enumerated().map { index, workout in
                 [
