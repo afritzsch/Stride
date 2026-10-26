@@ -4,9 +4,19 @@ struct AnalysisView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
+
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
+                    Button {
+                        model.showsCoachChat = true
+                    } label: {
+                        Label("Ask the coach", systemImage: "bubble.left.and.text.bubble.right")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .cardBackground()
+                    }
                     RunAnalysisCard()
                     if let latest = model.latestAnalysis {
                         ReportContent(analysis: latest)
@@ -24,6 +34,10 @@ struct AnalysisView: View {
                 .padding()
             }
             .navigationTitle("AI Coach")
+            .navigationDestination(isPresented: $model.showsCoachChat) { ChatView(chat: model.chat) }
+            .onAppear {
+                if !model.isAnalyzing { AppleAnalyzer.prewarm(instructions: PromptBuilder.instructions) }
+            }
         }
     }
 }
@@ -34,7 +48,7 @@ private struct RunAnalysisCard: View {
     var body: some View {
         Card {
             HStack {
-                Label(engineLabel, systemImage: model.engine == .claude ? "sparkles" : "apple.intelligence")
+                Label(modelLabel, systemImage: "apple.intelligence")
                 .font(.subheadline.bold())
                 Spacer()
                 if let snapshot = model.snapshot {
@@ -46,9 +60,7 @@ private struct RunAnalysisCard: View {
 
             AnalyzeControls(
                 isRunning: model.isAnalyzing,
-                runningText: model.engine == .claude
-                    ? "Claude is reviewing \(HealthKitService.windowWeeks) weeks of data. This can take a minute…"
-                    : "Apple Intelligence is analyzing your data…",
+                runningText: model.analysisStep ?? "Apple Intelligence is analyzing your data…",
                 buttonTitle: model.latestAnalysis == nil ? "Analyze my data" : "Run a new analysis",
                 isDisabled: model.snapshot == nil,
                 notice: model.analysisNotice,
@@ -56,17 +68,46 @@ private struct RunAnalysisCard: View {
             ) {
                 Task { await model.runAnalysis() }
             }
-            if model.snapshot == nil, model.engineBlocker == nil {
+            if model.isAnalyzing, let preview = model.analysisPreview {
+                ReportPreview(report: preview)
+            }
+            if model.snapshot == nil, model.aiBlocker == nil {
                 Text("Connect Apple Health on the Dashboard first.").font(.footnote).foregroundStyle(.secondary)
             }
         }
     }
 
-    private var engineLabel: String {
-        switch model.engine {
-        case .claude: "Claude"
-        case .apple: model.usesPrivateCloud ? "Apple Intelligence · Private Cloud" : "Apple Intelligence · On-device"
+    private var modelLabel: String {
+        model.usesPrivateCloud ? "Apple Intelligence · Private Cloud" : "Apple Intelligence · On-device"
+    }
+}
+
+/// The weekly analysis while Apple Intelligence is still writing it.
+private struct ReportPreview: View {
+    var report: AnalysisReport.PartiallyGenerated
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            if let headline = report.headline {
+                Text(headline).font(.headline)
+            }
+            if let assessment = report.assessment {
+                Text(assessment).font(.subheadline).foregroundStyle(.secondary)
+            }
+            if let insights = report.insights, !insights.isEmpty {
+                ForEach(Array(insights.enumerated()), id: \.offset) { _, insight in
+                    if let title = insight.title {
+                        Label(title, systemImage: "sparkle").font(.footnote)
+                    }
+                }
+            }
+            if let plan = report.weekPlan, !plan.isEmpty {
+                Label("Planning day \(min(plan.count, 7)) of 7…", systemImage: "calendar").font(.footnote).foregroundStyle(.secondary)
+            }
         }
+        .animation(.default, value: report.headline)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -81,7 +122,7 @@ struct ReportContent: View {
                 HStack {
                     StatusBadge(text: report.trainingStatus.title, color: report.trainingStatus.color)
                     Spacer()
-                    Text("\(analysis.sourceTitle) · \(analysis.createdAt.formatted(.relative(presentation: .named)))")
+                    Text("\(analysis.modelName) · \(analysis.createdAt.formatted(.relative(presentation: .named)))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -155,7 +196,7 @@ private struct HistoryList: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(analysis.report.headline).font(.subheadline).lineLimit(2)
-                        Text("\(analysis.sourceTitle) · \(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                        Text("\(analysis.modelName) · \(analysis.createdAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

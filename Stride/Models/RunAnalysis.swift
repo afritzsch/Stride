@@ -44,22 +44,6 @@ nonisolated struct RunAnalysis: Codable, Hashable, Sendable {
     var nextSession: String
 }
 
-extension RunAnalysis: StructuredOutput {
-    nonisolated static var jsonSchema: [String: Any] {
-        typealias S = JSONSchema
-        return S.object([
-            "headline": S.string,
-            "effort": S.enumeration(EffortLevel.self),
-            "summary": S.array(S.string),
-            "planComparison": S.string,
-            "highlights": S.array(S.string),
-            "improvements": S.array(S.string),
-            "recovery": S.string,
-            "nextSession": S.string,
-        ])
-    }
-}
-
 extension RunAnalysis {
     private enum CodingKeys: String, CodingKey {
         case effort, headline, summary, planComparison, highlights, improvements, recovery, nextSession

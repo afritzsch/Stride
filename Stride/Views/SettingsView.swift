@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var apiKeyDraft = ""
     @State private var exportURL: URL?
     @State private var isExporting = false
     @State private var exportError: String?
@@ -13,49 +12,23 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("Engine", selection: $model.engine) {
-                        ForEach(AIEngine.allCases) { Text($0.title).tag($0) }
+                    LabeledContent("On-device model", value: AppleAnalyzer.onDeviceBlocker ?? "Ready")
+                    if AppleAnalyzer.isPrivateCloudInBuild {
+                        Toggle("Use Private Cloud Compute", isOn: $model.allowPrivateCloud)
+                        if model.allowPrivateCloud {
+                            LabeledContent("Private Cloud Compute", value: AppleAnalyzer.privateCloudStatus)
+                        }
+                    } else {
+                        LabeledContent("Private Cloud Compute", value: "Needs paid developer account")
                     }
-                    .pickerStyle(.segmented)
-
-                    switch model.engine {
-                    case .claude:
-                        SecureField("Anthropic API key", text: $apiKeyDraft)
-                            .textContentType(.password)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        Button(model.apiKey.isEmpty ? "Save key" : "Update key") {
-                            model.apiKey = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                            apiKeyDraft = ""
-                        }
-                        .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if !model.apiKey.isEmpty {
-                            LabeledContent("Saved key", value: "••••" + model.apiKey.suffix(4))
-                            Button("Remove key", role: .destructive) { model.apiKey = "" }
-                        }
-                    case .apple:
-                        if AppleAnalyzer.isPrivateCloudInBuild {
-                            Toggle("Use Private Cloud Compute", isOn: $model.allowPrivateCloud)
-                            if model.allowPrivateCloud {
-                                LabeledContent("Private Cloud Compute", value: AppleAnalyzer.privateCloudStatus)
-                            }
-                        } else {
-                            LabeledContent("Private Cloud Compute", value: "Needs paid developer account")
-                        }
-                        LabeledContent("On-device model", value: AppleAnalyzer.onDeviceBlocker ?? "Ready")
-                    }
+                    Toggle("Review new workouts automatically", isOn: $model.autoReviewWorkouts)
                 } header: {
-                    Text("AI engine")
+                    Text("Apple Intelligence")
                 } footer: {
-                    switch model.engine {
-                    case .claude:
-                        Text("Uses \(ClaudeAnalyzer.displayName) with your own key from [platform.claude.com](https://platform.claude.com). A summary of your health data is sent to Anthropic for each analysis. The key is stored in the Keychain.")
-                    case .apple:
-                        if AppleAnalyzer.isPrivateCloudInBuild {
-                            Text("Free, no API key. With Private Cloud Compute on, Apple's larger server model runs the analysis; Apple doesn't store your data. It has a usage limit, and when you reach it or are offline, the smaller on-device model takes over. Turn it off to keep everything on your iPhone.")
-                        } else {
-                            Text("Free, no API key, and private: the analysis runs on your iPhone with Apple's on-device model. Apple's larger Private Cloud Compute model needs an entitlement that only paid Apple Developer accounts can get.")
-                        }
+                    if AppleAnalyzer.isPrivateCloudInBuild {
+                        Text("Free and private. With Private Cloud Compute on, Apple's larger server model runs the analysis; Apple doesn't store your data. It has a usage limit, and when you reach it or are offline, the smaller on-device model takes over. Turn it off to keep everything on your iPhone.")
+                    } else {
+                        Text("Free and private: analyses, reviews and the coach chat run on your iPhone with Apple's on-device model. Apple's larger Private Cloud Compute model needs an entitlement that only paid Apple Developer accounts can get.")
                     }
                 }
 

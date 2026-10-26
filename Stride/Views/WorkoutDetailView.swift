@@ -51,7 +51,9 @@ struct WorkoutDetailView: View {
                         ProgressView().padding()
                     }
                     analyzeCard.id("review")
-                    if let saved = model.runAnalyses[workout.id] {
+                    if isAnalyzing, let preview = model.runPreviews[workout.id] {
+                        RunAnalysisPreview(analysis: preview)
+                    } else if let saved = model.runAnalyses[workout.id] {
                         RunAnalysisContent(saved: saved).id("analysis")
                     }
                 }
@@ -60,6 +62,9 @@ struct WorkoutDetailView: View {
             .navigationTitle(workout.sport)
             .navigationBarTitleDisplayMode(.inline)
             .task {
+                if model.runAnalyses[workout.id] == nil {
+                    AppleAnalyzer.prewarm(instructions: RunPromptBuilder.instructions)
+                }
                 await load()
                 let hooks = model.consumeLaunchHooks()
                 if let target = hooks.scrollTarget {
@@ -390,6 +395,30 @@ private struct SplitsCard: View {
 }
 
 // MARK: - Analysis
+
+/// The coach review while Apple Intelligence is still writing it.
+private struct RunAnalysisPreview: View {
+    var analysis: RunAnalysis.PartiallyGenerated
+
+    var body: some View {
+        Card {
+            if let effort = analysis.effort {
+                StatusBadge(text: effort.rawValue.capitalized, color: effort.color)
+            }
+            if let headline = analysis.headline {
+                Text(headline).font(.title3.bold())
+            }
+            ForEach(Array((analysis.summary ?? []).enumerated()), id: \.offset) { _, point in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("•").foregroundStyle(.secondary)
+                    Text(point)
+                }
+                .font(.subheadline)
+            }
+            ProgressView().frame(maxWidth: .infinity)
+        }
+    }
+}
 
 private struct RunAnalysisContent: View {
     var saved: SavedRunAnalysis
