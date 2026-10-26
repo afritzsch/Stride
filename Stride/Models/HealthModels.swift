@@ -52,4 +52,16 @@ nonisolated struct HealthSnapshot: Codable, Sendable {
     var isEmpty: Bool {
         workouts.isEmpty && sleep.isEmpty && days.allSatisfy { $0.steps == nil && $0.restingHeartRate == nil }
     }
+
+    /// Older history followed by this snapshot. The snapshot wins from its first day on, so recent numbers
+    /// match the dashboard even when the archive is a few days old.
+    func prepending(_ archive: HealthSnapshot?) -> HealthSnapshot {
+        guard let archive, let start = days.first?.date else { return self }
+        var merged = self
+        merged.days = archive.days.filter { $0.date < start } + days
+        merged.sleep = archive.sleep.filter { $0.date < start } + sleep
+        let ids = Set(workouts.map(\.id))
+        merged.workouts = archive.workouts.filter { $0.start < start && !ids.contains($0.id) } + workouts
+        return merged
+    }
 }

@@ -79,6 +79,83 @@ nonisolated enum DemoData {
 }
 
 nonisolated extension DemoData {
+    /// Older history before `start` (the demo snapshot's first day) for the progress screen: two years of
+    /// training that slowly gets fitter, with a summer break and a half marathon, so levels and records have a story.
+    static func archive(before start: Date, years: Int = 2, calendar: Calendar = .current) -> HealthSnapshot {
+        var rng = SeededGenerator(seed: 2024)
+        let first = calendar.date(byAdding: .year, value: -years, to: start) ?? start
+        let totalDays = max(calendar.dateComponents([.day], from: first, to: start).day ?? 0, 1)
+
+        var dailyMetrics: [DailyMetrics] = []
+        var sleep: [SleepNight] = []
+        var workouts: [WorkoutSummary] = []
+
+        for offset in 0..<totalDays {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: first) else { continue }
+            // 0 at the start of the archive, 1 where the regular demo snapshot takes over.
+            let fitness = Double(offset) / Double(totalDays)
+            let weekday = calendar.component(.weekday, from: day)
+            let daysLeft = totalDays - offset
+            // Three weeks off in the first summer.
+            let isBreak = (200..<221).contains(offset)
+
+            dailyMetrics.append(DailyMetrics(
+                date: day,
+                steps: Double.random(in: 4500...11500, using: &rng) + fitness * 1500,
+                activeEnergyKcal: Double.random(in: 300...800, using: &rng),
+                restingHeartRate: 58 - 7 * fitness + Double.random(in: -2...2, using: &rng),
+                hrvMs: 50 + 12 * fitness + Double.random(in: -6...6, using: &rng),
+                bodyMassKg: Double.random(in: 0...1, using: &rng) < 0.5
+                    ? 77 - 4.5 * fitness + Double.random(in: -0.4...0.4, using: &rng)
+                    : nil
+            ))
+
+            let asleep = 6.9 + 0.5 * fitness + Double.random(in: -0.7...0.7, using: &rng)
+            let bedtimeMinutes = 23 * 60 + Int.random(in: -50...50, using: &rng)
+            if let previousDay = calendar.date(byAdding: .day, value: -1, to: day),
+               let bedtime = calendar.date(byAdding: .minute, value: bedtimeMinutes, to: previousDay) {
+                sleep.append(SleepNight(
+                    date: day,
+                    bedtime: bedtime,
+                    wakeTime: bedtime.addingTimeInterval((asleep + 0.4) * 3600),
+                    asleepHours: asleep,
+                    deepHours: asleep * 0.17,
+                    remHours: asleep * 0.22,
+                    awakeHours: 0.4
+                ))
+            }
+
+            guard !isBreak else { continue }
+            let pace = 0.15 + 0.03 * fitness // km per minute
+            // (sport, minutes, avg HR, km per minute); more sessions as fitness grows.
+            let plan: (String, Double, Double, Double)? = switch weekday {
+            case 3: ("Running", 35 + 15 * fitness, 158, pace + 0.01)
+            case 5 where fitness > 0.3: ("Running", 40, 152, pace)
+            case 7 where (148..<155).contains(daysLeft): ("Running", 21.2 / (pace + 0.005), 165, pace + 0.005) // half marathon race
+            case 7: ("Running", 50 + 35 * fitness, 145, pace - 0.01)
+            case 1 where fitness > 0.15: ("Cycling", 45 + 15 * fitness, 126, 0.42)
+            case 2 where fitness > 0.5: ("Strength", 35, 110, 0)
+            default: nil
+            }
+            // Skip about one session in eight, like real life.
+            guard let (sport, minutes, heartRate, kmPerMinute) = plan, Double.random(in: 0...1, using: &rng) > 0.12,
+                  let workoutStart = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: day) else { continue }
+            let duration = minutes + Double.random(in: -5...8, using: &rng)
+            workouts.append(WorkoutSummary(
+                id: UUID(uuidString: String(format: "00000000-0000-4000-8000-%012llx", UInt64(workoutStart.timeIntervalSince1970)))!,
+                start: workoutStart,
+                durationMinutes: duration,
+                sport: sport,
+                distanceKm: kmPerMinute > 0 ? duration * kmPerMinute : nil,
+                activeEnergyKcal: duration * 11,
+                averageHeartRate: heartRate + Double.random(in: -4...4, using: &rng),
+                maxHeartRate: heartRate + 18,
+                sourceName: "Demo"
+            ))
+        }
+        return HealthSnapshot(fetchedAt: start, days: dailyMetrics, sleep: sleep, workouts: workouts, isDemo: true)
+    }
+
     static func detail(for workout: WorkoutSummary) -> WorkoutDetail {
         WorkoutDetail.build(summary: workout, raw: rawWorkout(for: workout))
     }

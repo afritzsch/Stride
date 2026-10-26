@@ -105,7 +105,8 @@ def launch(
 ) -> dict:
     """Install and (re)launch the app on a screen.
 
-    route: dashboard | coach | plan | settings | workouts | workout:<latest|latest-run|index|uuid>
+    route: dashboard | progress | coach | plan | settings | workouts | workout:<latest|latest-run|index|uuid> |
+        metric:<load|acwr|sleep|restingHR|hrv|steps|weight>
     demo: force demo data on/off (None keeps the app's setting).
     fixture: path on this Mac to a HealthFixture JSON to replay instead of HealthKit; omit to clear.
     scroll_to: on the first workout opened, scroll to route | heart-rate | zones | splits | review | analysis.
@@ -258,8 +259,8 @@ def serve() -> None:
         route: str = "dashboard", demo: bool | None = None, fixture: str | None = None,
         scroll_to: str | None = None, analyze: bool = False, reinstall: bool = False,
     ) -> dict:
-        """Install and relaunch Stride on a screen. route: dashboard | coach | plan | settings | workouts |
-        workout:<latest|latest-run|index|uuid>. fixture: Mac path of a HealthFixture JSON to replay.
+        """Install and relaunch Stride on a screen. route: dashboard | progress | coach | chat | plan | settings | workouts |
+        workout:<latest|latest-run|index|uuid> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>. fixture: Mac path of a HealthFixture JSON to replay.
         scroll_to: route | heart-rate | zones | splits | review | analysis."""
         return launch(route, demo, fixture, scroll_to, analyze, reinstall)
 

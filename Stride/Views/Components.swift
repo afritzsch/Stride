@@ -2,12 +2,20 @@ import SwiftUI
 
 struct Card<Content: View>: View {
     var title: String?
+    /// Shows a chevron next to the title, for cards wrapped in a NavigationLink.
+    var isLink = false
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let title {
-                Text(title).font(.headline)
+                HStack {
+                    Text(title).font(.headline)
+                    if isLink {
+                        Spacer()
+                        LinkChevron()
+                    }
+                }
             }
             content
         }
@@ -67,18 +75,31 @@ struct AnalyzeControls: View {
     }
 }
 
+struct LinkChevron: View {
+    var body: some View {
+        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary).accessibilityHidden(true)
+    }
+}
+
 struct MetricTile: View {
     var title: String
     var value: String
     var caption: String?
     var systemImage: String
     var tint: Color = .accentColor
+    var isLink = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: systemImage)
-                .font(.caption)
-                .foregroundStyle(tint)
+            HStack {
+                Label(title, systemImage: systemImage)
+                    .font(.caption)
+                    .foregroundStyle(tint)
+                if isLink {
+                    Spacer(minLength: 4)
+                    LinkChevron()
+                }
+            }
             Text(value)
                 .font(.title2.bold())
                 .monospacedDigit()

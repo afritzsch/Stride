@@ -17,6 +17,7 @@ nonisolated enum LegacyKeychain {
 nonisolated enum JSONStore {
     static let analyses = "analyses.json"
     static let runAnalyses = "run-analyses.json"
+    static let archive = "history-archive.json"
 
     /// nil when the file is missing or unreadable. A file that no longer decodes (e.g. after a model change)
     /// is moved aside first, so the next save doesn't overwrite the user's history.

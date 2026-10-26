@@ -10,6 +10,9 @@ struct ContentView: View {
             Tab("Dashboard", systemImage: "chart.bar.xaxis", value: AppTab.dashboard) {
                 DashboardView()
             }
+            Tab("Progress", systemImage: "trophy", value: AppTab.progress) {
+                ProgressOverviewView()
+            }
             Tab("AI Coach", systemImage: "sparkles", value: AppTab.coach) {
                 AnalysisView()
             }

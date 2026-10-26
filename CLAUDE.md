@@ -27,7 +27,7 @@ uv run --quiet tools/stride-mcp/server.py cli coarsen-fixture /tmp/demo.json /tm
 uv run --quiet tools/stride-mcp/server.py cli launch --fixture /tmp/coarse.json --route workout:latest-run
 ```
 
-The same tools are exposed as the `stride-simulator` MCP server via `.mcp.json`. It uses a dedicated simulator named "Stride Test" (created on first use). Routes: `dashboard | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid>` (`--scroll-to adherence` on `plan`; the `chat` route also dumps the chat tools' output to `state coachTools`); `--analyze` runs the analysis for the opened workout. The app side of these hooks is `Stride/AppModel+Debug.swift` (debug builds only).
+The same tools are exposed as the `stride-simulator` MCP server via `.mcp.json`. It uses a dedicated simulator named "Stride Test" (created on first use). Routes: `dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid>` (`--scroll-to adherence` on `plan`; the `chat` route also dumps the chat tools' output to `state coachTools`); `--analyze` runs the analysis for the opened workout. The app side of these hooks is `Stride/AppModel+Debug.swift` (debug builds only).
 
 Pure logic (models, metrics, prompt builders, plan checks, readiness, demo data) has no UIKit/HealthKit dependency and is compiled into the macOS harness in `tools/eval`:
 
@@ -45,6 +45,8 @@ Regenerate the app icon: `xcrun swift scripts/render-app-icon.swift Stride/Asset
 ## Architecture
 
 **Data flow.** `HealthKitService` → `HealthSnapshot` (8 weeks of daily metrics, sleep nights, workout summaries) → `MetricsReport` (Banister TRIMP load per workout, acute:chronic ratio, monotony, sleep regularity, weekly rollups) → `PromptBuilder` → analyzer → `AnalysisReport`. Per workout: `RawWorkoutData` (raw samples) → `WorkoutDetail.build` → `RunPromptBuilder` → `RunAnalysis`. `AppModel` (`@Observable`, injected via `.environment`) owns state, persistence and model calls (`generate(_:...)`).
+
+**Long-term progress.** The Progress tab uses `ProgressReport` (XP and levels per `Skill`, week/month/year buckets for every `ProgressMetric`, records, achievements) over `snapshot.prepending(archive)`. The archive is up to 10 years of history from `HealthKitService.fetchHistory()`, cached in `history-archive.json` and reread at most weekly (or on pull to refresh); demo mode uses `DemoData.archive`, fixtures have none. XP rules are shown in the UI (`Skill.rule`); keep them in sync with the code.
 
 **Three interchangeable data sources** feed the same pipeline: HealthKit, `DemoData` (seeded synthetic data), and a `HealthFixture` JSON (an export of real data, replayed in debug builds from `Documents/fixture.json`). All workout processing goes through `WorkoutDetail.build(summary:raw:)` so that demo data and fixtures exercise the real code. Users create fixtures from Settings → "Export data for debugging". Fixture dates are ISO 8601 (`HealthFixture.encoder()/decoder()`).
 
