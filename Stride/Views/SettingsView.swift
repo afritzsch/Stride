@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
@@ -161,6 +162,7 @@ struct SettingsView: View {
 
 private struct HeartRateZonesSection: View {
     @Environment(AppModel.self) private var model
+    @State private var justCopied = false
 
     var body: some View {
         @Bindable var model = model
@@ -188,6 +190,20 @@ private struct HeartRateZonesSection: View {
                 LabeledContent("Zone \(index + 1)", value: "\(range) bpm")
                     .foregroundStyle(.secondary)
             }
+            Button {
+                let zones = model.heartRateZones
+                UIPasteboard.general.string = zones.garminText(maxHR: model.profile.effectiveMaxHeartRate)
+                model.profile.garminZoneFloors = zones.roundedFloors
+                justCopied = true
+            } label: {
+                Label(justCopied ? "Copied" : "Copy for Garmin", systemImage: justCopied ? "checkmark" : "doc.on.doc")
+            }
+            .onChange(of: model.heartRateZones) { justCopied = false }
+            // Resting HR and max HR move the zones, but the bpm values typed into Garmin stay put.
+            if let drift = model.heartRateZones.drift(from: model.profile.garminZoneFloors), drift >= 2 {
+                Label("Your zones have moved by up to \(drift) bpm since you last copied them. Copy them again and update your watch.", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
         } header: {
             Text("Heart rate zones")
         } footer: {
@@ -195,7 +211,7 @@ private struct HeartRateZonesSection: View {
             case .maxHeartRate:
                 Text("Garmin's default: zones start at 60, 70, 80 and 90% of max HR. If your watch shows different zones, set your max HR above, or pick Custom and copy the zones from Garmin Connect.")
             case .heartRateReserve:
-                Text("Percentages of the range between resting HR (your 28-day median, \(Int(model.restingHRBaseline)) bpm) and max HR.")
+                Text("Percentages of the range between resting HR (your 28-day median, \(Int(model.restingHRBaseline)) bpm) and max HR. If your watch has no % of HR reserve option, copy the zones for Garmin and type the bpm values into Garmin Connect (heart rate zones in your user settings); the watch then uses the same zones.")
             case .custom:
                 if !model.profile.hasValidCustomZones {
                     Text("Each zone has to start above the one before it. Until then, % of max HR zones are used.").foregroundStyle(.orange)
