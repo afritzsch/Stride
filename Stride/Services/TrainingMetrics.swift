@@ -20,6 +20,14 @@ nonisolated struct WeeklySummary: Identifiable, Hashable, Sendable {
     var id: Date { weekStart }
 }
 
+/// One value per day, for charts.
+nonisolated struct DatedValue: Identifiable, Hashable, Sendable {
+    var date: Date
+    var value: Double
+
+    var id: Date { date }
+}
+
 nonisolated struct TrainingIndicators: Sendable {
     /// Sum of TRIMP over the last 7 days.
     var acuteLoad = 0.0
@@ -57,6 +65,8 @@ nonisolated struct MetricsReport: Sendable {
     var weeks: [WeeklySummary]
     var dailyLoad: [Date: Double]
     var workoutLoad: [UUID: Double]
+    /// Acute:chronic ratio as of each day that has 28 days of synced history behind it.
+    var acwrHistory: [DatedValue]
     var indicators: TrainingIndicators
     var heartRateZones: HeartRateZones
 
@@ -81,15 +91,23 @@ nonisolated struct MetricsReport: Sendable {
             dailyLoad[calendar.startOfDay(for: workout.start), default: 0] += load
         }
 
-        let last7Loads = (0..<7).map { offset in
-            dailyLoad[calendar.date(byAdding: .day, value: -offset, to: today) ?? today] ?? 0
+        func loads(endingOn day: Date, days: Int) -> [Double] {
+            (0..<days).map { offset in dailyLoad[calendar.date(byAdding: .day, value: -offset, to: day) ?? day] ?? 0 }
         }
+        let last7Loads = loads(endingOn: today, days: 7)
         ind.acuteLoad = last7Loads.reduce(0, +)
         ind.chronicLoad = dailyLoad.filter { $0.key >= start28 }.values.reduce(0, +) / 4
         // With less than 28 days of synced data the chronic average is too low and the ratio reads as overload.
         let firstSynced = snapshot.days.first { $0.steps != nil || $0.restingHeartRate != nil }?.date
         let hasChronicHistory = firstSynced.map { $0 <= start28 } ?? false
         ind.acwr = hasChronicHistory && ind.chronicLoad > 0 ? ind.acuteLoad / ind.chronicLoad : nil
+        acwrHistory = snapshot.days.compactMap { day in
+            guard let firstSynced, let chronicStart = calendar.date(byAdding: .day, value: -27, to: day.date),
+                  firstSynced <= chronicStart else { return nil }
+            let chronic = loads(endingOn: day.date, days: 28).reduce(0, +) / 4
+            guard chronic > 0 else { return nil }
+            return DatedValue(date: day.date, value: loads(endingOn: day.date, days: 7).reduce(0, +) / chronic)
+        }
         if let sd = Self.standardDeviation(last7Loads), sd > 0 {
             ind.monotony = (ind.acuteLoad / 7) / sd
         }
