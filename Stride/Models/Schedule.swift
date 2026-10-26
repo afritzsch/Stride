@@ -197,7 +197,10 @@ nonisolated struct SlotWeather: Hashable, Sendable {
     var summary: String {
         let temperature = "\(Int(temperatureC.rounded())) °C"
         let chance = Int((precipitationChance * 100).rounded())
-        return chance >= 30 ? "\(temperature), \(condition.severity >= SkyCondition.snow.severity ? condition.title.lowercased() : "rain") \(chance)%" : "\(temperature), dry"
+        guard chance >= 30 else { return "\(temperature), dry" }
+        // Snow and worse are named; lighter conditions with a rain chance are just "rain".
+        let kind = condition.severity >= SkyCondition.snow.severity ? condition.title.lowercased() : "rain"
+        return "\(temperature), \(kind) \(chance)%"
     }
 }
 
