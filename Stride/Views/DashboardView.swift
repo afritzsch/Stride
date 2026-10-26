@@ -27,12 +27,12 @@ struct DashboardView: View {
                             NoDataCard()
                         } else {
                             IndicatorGrid(metrics: metrics, profile: model.profile)
-                            WeeklyLoadChart(weeks: metrics.weeks)
-                            SleepChart(nights: Array(snapshot.sleep.suffix(28)), target: model.profile.sleepTargetHours)
-                            RecoveryChart(days: Array(snapshot.days.suffix(28)))
-                            if metrics.indicators.latestWeightKg != nil {
-                                WeightChart(days: snapshot.days.filter { $0.bodyMassKg != nil }, indicators: metrics.indicators)
+                            MetricLink(metric: .load) { WeeklyLoadChart(weeks: metrics.weeks, isLink: true) }
+                            MetricLink(metric: .sleep) {
+                                SleepChart(nights: Array(snapshot.sleep.suffix(28)), target: model.profile.sleepTargetHours, isLink: true)
                             }
+                            MetricLink(metric: .restingHR) { RecoveryChart(days: Array(snapshot.days.suffix(28))) }
+                            WeightCard(days: snapshot.days, indicators: metrics.indicators)
                             RecentWorkouts(workouts: Array(snapshot.workouts.suffix(8).reversed()))
                         }
                     } else if model.isLoadingHealth {
@@ -46,6 +46,7 @@ struct DashboardView: View {
                 switch destination {
                 case .allWorkouts: WorkoutListView()
                 case .workout(let workout): WorkoutDetailView(workout: workout)
+                case .metric(let metric): MetricDetailView(metric: metric)
                 }
             }
             .refreshable { await model.refresh() }
@@ -96,76 +97,94 @@ private struct NoDataCard: View {
     }
 }
 
+private struct MetricLink<Label: View>: View {
+    var metric: DashboardMetric
+    @ViewBuilder var label: Label
+
+    var body: some View {
+        NavigationLink(value: DashboardDestination.metric(metric)) { label }
+            .buttonStyle(.plain)
+    }
+}
+
 private struct IndicatorGrid: View {
     var metrics: MetricsReport
     var profile: UserProfile
 
     private var ind: TrainingIndicators { metrics.indicators }
-    /// Nights within this many hours of the sleep target count as on target.
-    static let sleepTolerance = 0.25
-
-    private var acwrTint: Color {
-        guard let acwr = ind.acwr else { return .gray }
-        switch acwr {
-        case ..<0.8: return .orange
-        case ...1.3: return .green
-        default: return .red
-        }
-    }
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
-            MetricTile(
-                title: "Load, 7 days",
-                value: Format.number(ind.acuteLoad),
-                caption: "4-wk avg \(Format.number(ind.chronicLoad)) / week",
-                systemImage: "flame.fill",
-                tint: .orange
-            )
-            MetricTile(
-                title: "Acute:chronic",
-                value: Format.number(ind.acwr, digits: 2),
-                caption: "Sweet spot 0.8–1.3",
-                systemImage: "gauge.with.dots.needle.50percent",
-                tint: acwrTint
-            )
-            MetricTile(
-                title: "Sleep, 7 days",
-                value: Format.hours(ind.sleep7),
-                caption: ind.bedtimeSDMinutes.map { "Bedtime varies ±\(Int($0)) min" },
-                systemImage: "bed.double.fill",
-                tint: ind.sleep7.map { $0 >= profile.sleepTargetHours - Self.sleepTolerance ? .indigo : .orange } ?? .gray
-            )
-            MetricTile(
-                title: "Resting HR",
-                value: ind.restingHR7.map { "\(Format.number($0)) bpm" } ?? "–",
-                caption: Format.delta(ind.restingHR7, ind.restingHR28, unit: " bpm"),
-                systemImage: "heart.fill",
-                tint: .red
-            )
-            MetricTile(
-                title: "HRV",
-                value: ind.hrv7.map { "\(Format.number($0)) ms" } ?? "–",
-                caption: Format.delta(ind.hrv7, ind.hrv28, unit: " ms"),
-                systemImage: "waveform.path.ecg",
-                tint: .pink
-            )
-            MetricTile(
-                title: "Steps, 7 days",
-                value: Format.number(ind.steps7),
-                caption: "Target \(profile.dailyStepTarget.formatted())",
-                systemImage: "shoeprints.fill",
-                tint: .green
-            )
+            MetricLink(metric: .load) {
+                MetricTile(
+                    title: "Load, 7 days",
+                    value: Format.number(ind.acuteLoad),
+                    caption: "4-wk avg \(Format.number(ind.chronicLoad)) / week",
+                    systemImage: "flame.fill",
+                    tint: .orange,
+                    isLink: true
+                )
+            }
+            MetricLink(metric: .acwr) {
+                MetricTile(
+                    title: "Load ratio",
+                    value: Format.number(ind.acwr, digits: 2),
+                    caption: ind.acwr.map { LoadRatio($0).summary } ?? "Needs 4 weeks of data",
+                    systemImage: "gauge.with.dots.needle.50percent",
+                    tint: ind.acwr.map { LoadRatio($0).color } ?? .gray,
+                    isLink: true
+                )
+            }
+            MetricLink(metric: .sleep) {
+                MetricTile(
+                    title: "Sleep, 7 days",
+                    value: Format.hours(ind.sleep7),
+                    caption: ind.bedtimeSDMinutes.map { "Bedtime varies ±\(Int($0)) min" },
+                    systemImage: "bed.double.fill",
+                    tint: ind.sleep7.map { SleepChart.isOnTarget($0, target: profile.sleepTargetHours) ? .indigo : .orange } ?? .gray,
+                    isLink: true
+                )
+            }
+            MetricLink(metric: .restingHR) {
+                MetricTile(
+                    title: "Resting HR",
+                    value: ind.restingHR7.map { "\(Format.number($0)) bpm" } ?? "–",
+                    caption: Format.delta(ind.restingHR7, ind.restingHR28, unit: " bpm"),
+                    systemImage: "heart.fill",
+                    tint: .red,
+                    isLink: true
+                )
+            }
+            MetricLink(metric: .hrv) {
+                MetricTile(
+                    title: "HRV",
+                    value: ind.hrv7.map { "\(Format.number($0)) ms" } ?? "–",
+                    caption: ind.hrv28 == nil ? "None in Apple Health" : Format.delta(ind.hrv7, ind.hrv28, unit: " ms"),
+                    systemImage: "waveform.path.ecg",
+                    tint: .pink,
+                    isLink: true
+                )
+            }
+            MetricLink(metric: .steps) {
+                MetricTile(
+                    title: "Steps, 7 days",
+                    value: Format.number(ind.steps7),
+                    caption: "Target \(profile.dailyStepTarget.formatted())",
+                    systemImage: "shoeprints.fill",
+                    tint: .green,
+                    isLink: true
+                )
+            }
         }
     }
 }
 
-private struct WeeklyLoadChart: View {
+struct WeeklyLoadChart: View {
     var weeks: [WeeklySummary]
+    var isLink = false
 
     var body: some View {
-        Card(title: "Weekly training load") {
+        Card(title: "Weekly training load", isLink: isLink) {
             Chart(weeks) { week in
                 BarMark(
                     x: .value("Week", week.weekStart, unit: .weekOfYear),
@@ -184,19 +203,24 @@ private struct WeeklyLoadChart: View {
     }
 }
 
-private struct SleepChart: View {
+struct SleepChart: View {
+    var title = "Sleep, last 4 weeks"
     var nights: [SleepNight]
     var target: Double
+    var isLink = false
+
+    /// Nights within this many hours of the sleep target count as on target.
+    static func isOnTarget(_ hours: Double, target: Double) -> Bool { hours >= target - 0.25 }
 
     var body: some View {
-        Card(title: "Sleep, last 4 weeks") {
+        Card(title: title, isLink: isLink) {
             Chart {
                 ForEach(nights) { night in
                     BarMark(
                         x: .value("Night", night.date, unit: .day),
                         y: .value("Hours", night.asleepHours)
                     )
-                    .foregroundStyle(night.asleepHours >= target - IndicatorGrid.sleepTolerance ? Color.indigo.gradient : Color.orange.gradient)
+                    .foregroundStyle(Self.isOnTarget(night.asleepHours, target: target) ? Color.indigo.gradient : Color.orange.gradient)
                 }
                 RuleMark(y: .value("Target", target))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
@@ -214,7 +238,7 @@ private struct RecoveryChart: View {
     var days: [DailyMetrics]
 
     var body: some View {
-        Card(title: "Resting HR & HRV") {
+        Card(title: "Resting HR & HRV", isLink: true) {
             Chart {
                 ForEach(days) { day in
                     if let rhr = day.restingHeartRate {
@@ -234,20 +258,55 @@ private struct RecoveryChart: View {
     }
 }
 
-private struct WeightChart: View {
+private struct WeightCard: View {
     var days: [DailyMetrics]
     var indicators: TrainingIndicators
+    @State private var isLogging = false
+
+    var body: some View {
+        Card {
+            HStack {
+                Text("Weight, 8 weeks").font(.headline)
+                Spacer()
+                Button("Log", systemImage: "plus") { isLogging = true }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            if indicators.latestWeightKg == nil {
+                Text("No weigh-ins in the last \(HealthKitService.windowWeeks) weeks. Log one here, or connect a scale that writes to Apple Health.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                NavigationLink(value: DashboardDestination.metric(.weight)) {
+                    WeightChart(days: days, indicators: indicators, isLink: true)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .sheet(isPresented: $isLogging) {
+            WeightEntrySheet(initialKg: indicators.latestWeightKg)
+        }
+    }
+}
+
+/// Latest weigh-in, trend vs the 4-week average, and a line of the days with a weigh-in.
+struct WeightChart: View {
+    var days: [DailyMetrics]
+    var indicators: TrainingIndicators
+    var isLink = false
+
+    private var weighIns: [DailyMetrics] { days.filter { $0.bodyMassKg != nil } }
 
     /// Pad the axis so day-to-day noise isn't stretched across the whole chart height.
     private var yDomain: ClosedRange<Double> {
-        let values = days.compactMap(\.bodyMassKg)
+        let values = weighIns.compactMap(\.bodyMassKg)
         let low = values.min() ?? 0, high = values.max() ?? 0
         let padding = max(1, (high - low) * 0.2)
         return (low - padding).rounded(.down)...(high + padding).rounded(.up)
     }
 
     var body: some View {
-        Card(title: "Weight, 8 weeks") {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("\(Format.number(indicators.latestWeightKg, digits: 1)) kg")
                     .font(.title2.bold())
@@ -261,8 +320,9 @@ private struct WeightChart: View {
                 if let delta = Format.delta(indicators.weight7, indicators.weight28, unit: " kg", digits: 1) {
                     Text(delta).font(.caption).foregroundStyle(.secondary)
                 }
+                if isLink { LinkChevron() }
             }
-            Chart(days) { day in
+            Chart(weighIns) { day in
                 if let kg = day.bodyMassKg {
                     LineMark(x: .value("Day", day.date, unit: .day), y: .value("Weight", kg))
                         .foregroundStyle(.teal)
@@ -296,7 +356,7 @@ private struct RecentWorkouts: View {
                 NavigationLink(value: DashboardDestination.workout(workout)) {
                     HStack {
                         WorkoutRow(workout: workout)
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary).accessibilityHidden(true)
+                        LinkChevron()
                     }
                 }
                 .buttonStyle(.plain)

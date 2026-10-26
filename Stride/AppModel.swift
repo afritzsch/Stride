@@ -2,12 +2,13 @@ import Foundation
 import Observation
 
 enum AppTab: String, Hashable {
-    case dashboard, coach, plan, settings
+    case dashboard, progress, coach, plan, settings
 }
 
 enum DashboardDestination: Hashable {
     case allWorkouts
     case workout(WorkoutSummary)
+    case metric(DashboardMetric)
 }
 
 @Observable
@@ -43,6 +44,11 @@ final class AppModel {
     private(set) var needsHealthAuthorization = false
     private(set) var isLoadingHealth = false
     private(set) var healthError: String?
+    /// Levels, records and period totals over all history (the archive plus the current snapshot).
+    private(set) var progress: ProgressReport?
+    private(set) var isLoadingArchive = false
+    /// Years of history before the snapshot, for the progress screen. Cached on disk because reading it takes a while.
+    private var archive: HealthSnapshot?
 
     private(set) var history: [SavedAnalysis]
     private(set) var isAnalyzing = false
@@ -56,6 +62,7 @@ final class AppModel {
 
     var selectedTab = AppTab.dashboard
     var dashboardPath: [DashboardDestination] = []
+    var progressPath: [Skill] = []
 
     /// Exported real data replayed instead of HealthKit (debug builds; see AppModel+Debug).
     var fixture: HealthFixture?
@@ -95,6 +102,7 @@ final class AppModel {
         history = JSONStore.load([SavedAnalysis].self, from: JSONStore.analyses) ?? []
         let savedRuns = JSONStore.load([SavedRunAnalysis].self, from: JSONStore.runAnalyses) ?? []
         runAnalyses = Dictionary(savedRuns.map { ($0.workoutID, $0) }, uniquingKeysWith: { latest, _ in latest })
+        archive = JSONStore.load(HealthSnapshot.self, from: JSONStore.archive)
         #if DEBUG
         fixture = Self.loadFixture()
         #endif
@@ -106,7 +114,10 @@ final class AppModel {
         refreshGeneration += 1
         let generation = refreshGeneration
         healthError = nil
-        defer { writeDebugState() }
+        defer {
+            writeDebugState()
+            if generation == refreshGeneration { Task { await refreshArchive() } }
+        }
         if let fixture {
             snapshot = fixture.snapshot
             needsHealthAuthorization = false
@@ -155,8 +166,59 @@ final class AppModel {
         }
     }
 
+    /// Demo data and fixtures are replayed, so weigh-ins only go to Apple Health when it's the data source.
+    var savesToHealth: Bool { fixture == nil && snapshot?.isDemo != true }
+
+    /// Saves a weigh-in to Apple Health, or for demo data and fixtures only to the data in memory (until the next refresh).
+    func logWeight(kg: Double, at date: Date) async throws {
+        guard savesToHealth else {
+            let calendar = Calendar.current
+            guard var updated = snapshot,
+                  let index = updated.days.firstIndex(where: { calendar.isDate($0.date, inSameDayAs: date) }) else { return }
+            updated.days[index].bodyMassKg = kg
+            snapshot = updated
+            recomputeMetrics()
+            writeDebugState()
+            return
+        }
+        try await health.saveBodyMass(kg: kg, at: date)
+        await refresh()
+    }
+
     private func recomputeMetrics() {
         metrics = snapshot.map { MetricsReport(snapshot: $0, profile: profile) }
+        // Never mix demo history with real data (or the reverse) while the archive catches up after a switch.
+        let archive = archive?.isDemo == snapshot?.isDemo ? archive : nil
+        progress = snapshot.map { ProgressReport(snapshot: $0.prepending(archive), profile: profile) }
+    }
+
+    /// Loads the long history behind the snapshot. Apple Health is reread at most once a week unless forced,
+    /// since years of workouts and sleep take a while; the snapshot covers recent changes in between.
+    func refreshArchive(force: Bool = false) async {
+        guard let snapshot, !isLoadingArchive else { return }
+        if fixture != nil {
+            // Fixtures only hold the snapshot window.
+            archive = nil
+        } else if snapshot.isDemo {
+            archive = DemoData.archive(before: snapshot.days.first?.date ?? snapshot.fetchedAt)
+        } else {
+            if archive?.isDemo != false { archive = JSONStore.load(HealthSnapshot.self, from: JSONStore.archive) }
+            if force || archive.map({ Date.now.timeIntervalSince($0.fetchedAt) > Self.archiveMaxAge }) ?? true {
+                isLoadingArchive = true
+                defer { isLoadingArchive = false }
+                do {
+                    let fetched = try await health.fetchHistory()
+                    // Demo data or a fixture may have been switched on meanwhile.
+                    guard self.snapshot?.isDemo == false, fixture == nil else { return }
+                    archive = fetched
+                    JSONStore.save(fetched, to: JSONStore.archive)
+                } catch {
+                    debugLog("Reading history failed: \(error)")
+                }
+            }
+        }
+        recomputeMetrics()
+        writeDebugState()
     }
 
     // MARK: - Analysis
@@ -307,6 +369,7 @@ final class AppModel {
     }
 
     private static let maxSavedAnalyses = 30
+    private static let archiveMaxAge: TimeInterval = 7 * 86400
 
     private enum Keys {
         static let profile = "profile"

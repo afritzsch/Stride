@@ -9,6 +9,8 @@ nonisolated struct HealthKitService: Sendable {
     static var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
     /// How much history the app reads and analyzes.
     static let windowWeeks = 8
+    /// How far back the progress screen looks.
+    static let historyYears = 10
 
     private static let bpm = HKUnit.count().unitDivided(by: .minute())
 
@@ -43,6 +45,17 @@ nonisolated struct HealthKitService: Sendable {
 
     func requestAuthorization() async throws {
         try await store.requestAuthorization(toShare: [], read: readTypes)
+    }
+
+    /// Write access is asked for separately, on the first weigh-in, so reading never depends on it.
+    func saveBodyMass(kg: Double, at date: Date) async throws {
+        let type = HKQuantityType(.bodyMass)
+        if store.authorizationStatus(for: type) == .notDetermined {
+            try await store.requestAuthorization(toShare: [type], read: [])
+        }
+        guard store.authorizationStatus(for: type) == .sharingAuthorized else { throw HealthWriteError.notAllowed }
+        let quantity = HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: kg)
+        try await store.save(HKQuantitySample(type: type, quantity: quantity, start: date, end: date))
     }
 
     func fetchSnapshot(days: Int = windowWeeks * 7, calendar: Calendar = .current) async throws -> HealthSnapshot {
@@ -85,6 +98,22 @@ nonisolated struct HealthKitService: Sendable {
         )
     }
 
+    /// Everything up to `historyYears` back, for long-term progress. Days before the first data are dropped.
+    func fetchHistory(calendar: Calendar = .current) async throws -> HealthSnapshot {
+        let today = calendar.startOfDay(for: .now)
+        let limit = calendar.date(byAdding: .year, value: -Self.historyYears, to: today) ?? today
+        let earliest = calendar.startOfDay(for: max(store.earliestPermittedSampleDate(), limit))
+        let days = (calendar.dateComponents([.day], from: earliest, to: today).day ?? 0) + 1
+        var snapshot = try await fetchSnapshot(days: days, calendar: calendar)
+        let firstData = [
+            snapshot.days.first { $0.steps != nil || $0.restingHeartRate != nil || $0.hrvMs != nil || $0.bodyMassKg != nil }?.date,
+            snapshot.sleep.first?.date,
+            snapshot.workouts.first.map { calendar.startOfDay(for: $0.start) },
+        ].compactMap { $0 }.min()
+        if let firstData { snapshot.days.removeAll { $0.date < firstData } }
+        return snapshot
+    }
+
     // MARK: - Daily quantities
 
     private func dailyValues(
@@ -114,7 +143,20 @@ nonisolated struct HealthKitService: Sendable {
 
     // MARK: - Sleep
 
+    /// Reads a year at a time so years of sleep-stage samples aren't all in memory at once. Chunks split at the
+    /// same time of day as `start` (noon, from the caller), where nights are split anyway.
     private func sleepNights(from start: Date, to end: Date, calendar: Calendar) async throws -> [SleepNight] {
+        var nights: [SleepNight] = []
+        var chunkStart = start
+        while chunkStart < end {
+            let chunkEnd = min(calendar.date(byAdding: .year, value: 1, to: chunkStart) ?? end, end)
+            nights += try await sleepNightsChunk(from: chunkStart, to: chunkEnd, calendar: calendar)
+            chunkStart = chunkEnd
+        }
+        return nights
+    }
+
+    private func sleepNightsChunk(from start: Date, to end: Date, calendar: Calendar) async throws -> [SleepNight] {
         let descriptor = HKSampleQueryDescriptor(
             predicates: [.categorySample(type: HKCategoryType(.sleepAnalysis), predicate: HKQuery.predicateForSamples(withStart: start, end: end))],
             sortDescriptors: [SortDescriptor(\.startDate)]
@@ -327,6 +369,14 @@ nonisolated struct HealthKitService: Sendable {
             options: [.discreteAverage, .discreteMax]
         )
         return try? await descriptor.result(for: store)
+    }
+}
+
+nonisolated enum HealthWriteError: LocalizedError {
+    case notAllowed
+
+    var errorDescription: String? {
+        "Stride isn't allowed to save weight. Turn on Weight under Settings → Health → Data Access & Devices → Stride."
     }
 }
 

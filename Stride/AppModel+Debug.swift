@@ -18,7 +18,10 @@ extension HealthFixture {
 /// Hooks for driving the app from the Simulator (see tools/stride-mcp). Debug builds only read these
 /// launch arguments:
 ///   -route dashboard | coach | plan | settings | workouts | workout:<latest | latest-run | index | uuid>
-///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis
+///          | progress | skill:<endurance | power | strength | explorer | vitality | rest | discipline>
+///          | metric:<load | acwr | sleep | restingHR | hrv | steps | weight>
+///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis;
+///                         on the progress route: trend, compare, records, or achievements
 ///   -analyze YES          review the first opened workout
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
@@ -50,7 +53,12 @@ extension AppModel {
         guard let route = UserDefaults.standard.string(forKey: "route") else { return }
         let parts = route.split(separator: ":", maxSplits: 1).map(String.init)
         dashboardPath = []
+        progressPath = []
         switch parts.first ?? "" {
+        case "progress": selectedTab = .progress
+        case "skill":
+            selectedTab = .progress
+            if let skill = Skill(rawValue: parts.count > 1 ? parts[1] : "") { progressPath = [skill] }
         case "coach": selectedTab = .coach
         case "plan": selectedTab = .plan
         case "settings": selectedTab = .settings
@@ -61,6 +69,11 @@ extension AppModel {
             selectedTab = .dashboard
             if let workout = workout(matching: parts.count > 1 ? parts[1] : "latest") {
                 dashboardPath = [.workout(workout)]
+            }
+        case "metric":
+            selectedTab = .dashboard
+            if let metric = DashboardMetric(rawValue: parts.count > 1 ? parts[1] : "") {
+                dashboardPath = [.metric(metric)]
             }
         default:
             selectedTab = .dashboard
@@ -145,6 +158,18 @@ extension AppModel {
                     "load": round(metrics.workoutLoad[workout.id], 0),
                 ] as [String: Any]
             }
+        }
+
+        if let progress {
+            state["progress"] = [
+                "firstDate": progress.firstDate.map { iso.string(from: $0) } ?? NSNull(),
+                "athleteLevel": progress.athlete.level, "athleteXP": round(progress.athlete.xp, 0), "title": progress.athlete.title,
+                "skills": Dictionary(uniqueKeysWithValues: progress.skills.map { ($0.key.rawValue, ["level": $0.value.level, "xp": round($0.value.xp, 0)]) }),
+                "weekStreak": progress.currentWeekStreak, "longestWeekStreak": progress.longestWeekStreak,
+                "totalWorkouts": progress.totalWorkouts, "totalKm": round(progress.totalKm, 0), "totalHours": round(progress.totalHours, 0),
+                "records": progress.records.map { ["title": $0.title, "value": $0.value, "date": iso.string(from: $0.date)] },
+                "achievementsUnlocked": progress.achievements.filter(\.isUnlocked).map(\.title),
+            ] as [String: Any]
         }
 
         if let detail = debugDetail, let snapshot, let metrics {
