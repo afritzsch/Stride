@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Stride is a SwiftUI iOS app (iPhone/iPad, iOS 27+, Xcode 27) that reads training, sleep and recovery data from Apple Health (any watch that syncs there; built around Garmin Connect's sync), computes training metrics, and uses Apple Intelligence (Foundation Models, on-device) for a weekly analysis + 7-day plan, per-workout coach reviews, a daily readiness adjustment and a coach chat. There is no server or API key; Claude support was removed. Bundle ID `com.afritzsch.stride`, signed with a free Personal Team.
+Stride is a SwiftUI iOS app (iPhone/iPad, iOS 27+, Xcode 27) that reads training, sleep and recovery data from Apple Health (any watch that syncs there; built around Garmin Connect's sync), computes training metrics, and uses Apple Intelligence (Foundation Models, on-device) for a weekly analysis + 7-day plan, per-workout coach reviews, a daily readiness adjustment and a coach chat. The athlete can also plan days themselves, and the app suggests training times from the calendar (EventKit) and the forecast (Open-Meteo, or WeatherKit in builds that have it). There is no server or API key; Claude support was removed. Bundle ID `com.afritzsch.stride`, signed with a free Personal Team.
 
 ## Commands
 
@@ -27,12 +27,12 @@ uv run --quiet tools/stride-mcp/server.py cli coarsen-fixture /tmp/demo.json /tm
 uv run --quiet tools/stride-mcp/server.py cli launch --fixture /tmp/coarse.json --route workout:latest-run
 ```
 
-The same tools are exposed as the `stride-simulator` MCP server via `.mcp.json`. It uses a dedicated simulator named "Stride Test" (created on first use). Routes: `dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid>` (`--scroll-to adherence` on `plan`; the `chat` route also dumps the chat tools' output to `state coachTools`); `--analyze` runs the analysis for the opened workout. The app side of these hooks is `Stride/AppModel+Debug.swift` (debug builds only).
+The same tools are exposed as the `stride-simulator` MCP server via `.mcp.json`. It uses a dedicated simulator named "Stride Test" (created on first use). Routes: `dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid>` (`--scroll-to adherence` and `--sheet week|edit:<n>|time:<n>` on `plan`; the `chat` route also dumps the chat tools' output to `state coachTools`); `--analyze` runs the analysis for the opened workout. The app side of these hooks is `Stride/AppModel+Debug.swift` (debug builds only).
 
 Pure logic (models, metrics, prompt builders, plan checks, readiness, demo data) has no UIKit/HealthKit dependency and is compiled into the macOS harness in `tools/eval`:
 
 ```sh
-tools/eval/run.sh                  # offline checks: plan adherence, prompts, plan check/repair, readiness
+tools/eval/run.sh                  # offline checks: plan adherence, prompts, plan check/repair, readiness, time suggestions
 tools/eval/run.sh model [filter]   # also runs the on-device model on scenarios (needs Apple Intelligence on this Mac)
 tools/eval/run.sh prompt [compact] # print the weekly prompt for the demo data with history
 tools/eval/run.sh seed <dir>       # write saved analyses, a review and today's adjustment in the app's format
@@ -56,6 +56,10 @@ Regenerate the app icon: `xcrun swift scripts/render-app-icon.swift Stride/Asset
 
 **Plans are checked in code.** `PlannedDay` has `sport` (one of `PlannedDay.sports`, matching HealthKit names) and `targetZone` (0–5); old saved plans decode with `""`/0. After a weekly analysis, `PlanRepair.run` normalizes labels and rest days, checks `PlanCheck.problems` (training days, weekly hours, back-to-back hard days, zero-minute sessions) and asks the model once for a fixed `WeekPlan`, kept only if it's 7 days with fewer problems. Remaining problems become a notice.
 
+**The athlete's own plan.** Days the athlete plans or edits (Plan tab, "Plan week") are `AthletePlanDay`s in `athlete-plan.json`. `TrainingPlan` (analyses + athlete days) answers every plan lookup (`AppModel.plannedSession(on:)`, `PlanAdherence`); athlete days always win. The weekly prompt lists them under THE ATHLETE'S OWN PLAN, and `PlanRepair.run(pinned:)` puts them back over whatever the model wrote. `updatePlannedDay` (readiness adjustment, chat) changes the athlete day if there is one, else the covering analysis, else creates an athlete day.
+
+**Training times.** `SessionScheduler` (pure) finds free gaps around `BusyInterval`s within the settings' window and buffer, and ranks 15-minute candidates by rain, "feels like" temperature per sport, wind, UV, daylight (`SunTimes`), the athlete's usual start hours (`StartHabits`) and late hard sessions; indoor sports ignore weather. `ScheduleModel` (owned by `AppModel` like `chat`) holds `ScheduleSettings`, reads the calendar through `CalendarService`, fetches the forecast through `WeatherClient` (refetched hourly or when source/location change), and computes `DaySchedule`s on demand. Events Stride adds carry a `stride://session/<yyyy-MM-dd>` URL, so they count as that day's scheduled session instead of busy time; plan edits move or remove them (`sessionChanged(on:)`). Demo data uses `DemoSchedule` (fake calendar and forecast) and keeps added sessions in memory. The weekly prompt gets a FREE TIME section (`availabilityLine`) when suggestions are on, and the chat has `freeTimes`, `weather` and `scheduleSession` tools.
+
 **Apple Intelligence features.** Analyses and reviews stream (`AppleAnalyzer` `onPartial` → `AppModel.analysisPreview` / `runPreviews`). `Readiness` flags this morning's resting HR, HRV, sleep and load against baselines; when it's down and a session is planned, the Dashboard's Today card gets a `DayAdjustment` (automatic once a day on Apple, applied only when the athlete accepts; `clamped(to:)` keeps it from getting harder or longer). `CoachChat` is a `LanguageModelSession` with tools (`recentDays`, `listWorkouts`, `workoutDetail`, `getPlan`, `changePlanDay`) backed by `CoachToolbox`; it restarts the session on `contextSizeExceeded`. `reviewNewWorkouts()` reviews unreviewed workouts from the last 2 days after each refresh (each tried once, setting "Review new workouts automatically").
 
 **Guided generation.** `AnalysisReport`, `RunAnalysis`, `WeekPlan` and `DayAdjustment` are `@Generable` (and `Codable` where they're saved). Generation order follows property declaration order. Saved JSON must keep decoding after model changes: add custom `init(from:)` with defaults for new fields (see `PlannedDay`, `RunAnalysis`, `SavedAnalysis`).
@@ -67,6 +71,8 @@ Analyses saved by older versions carry `"engine": "claude"|"onDevice"` instead o
 ## Gotchas
 
 - **Private Cloud Compute:** constructing `PrivateCloudComputeLanguageModel` traps unless the app has the `com.apple.developer.private-cloud-compute` entitlement, which the Personal Team can't get (provisioning rejects it). It's gated by the `PRIVATE_CLOUD_COMPUTE` compilation condition (`AppleAnalyzer.isPrivateCloudInBuild`); never create the model outside that gate.
+- **WeatherKit** needs the `com.apple.developer.weatherkit` entitlement (paid accounts only). It's gated by the `WEATHERKIT` compilation condition (`WeatherClient.isAppleWeatherInBuild`); to enable it, add the condition, the entitlement in `Stride.entitlements`, and WeatherKit for the App ID in the developer portal. Apple requires its Weather mark and legal link next to WeatherKit data (`ScheduleModel.appleAttribution`); Open-Meteo asks for a credit link. Without the flag a saved `.apple` setting falls back to Open-Meteo.
+- **Calendar and location** need `NSCalendarsFullAccessUsageDescription` / `NSLocationWhenInUseUsageDescription` (`INFOPLIST_KEY_*` build settings). Busy time needs full access; all-day, free, cancelled and declined events don't block time.
 - **Foundation Models in the Simulator** reports "available" but every generation fails (`SensitiveContentAnalysisML error 15`: guardrail backend missing). AI output can only be tested on a device, or with `tools/eval/run.sh model` on a Mac with Apple Intelligence. While streaming, this and some other failures arrive as a bridged `NSError` (domain `FoundationModels…`), not as `LanguageModelError`.
 - **`simctl spawn <udid> defaults read`** doesn't see the app's own preferences; read `<data container>/Library/Preferences/com.afritzsch.stride.plist` instead.
 - **Simulator builds must be code-signed** (don't add `CODE_SIGNING_ALLOWED=NO`), otherwise there are no HealthKit entitlements and HealthKit calls hang.

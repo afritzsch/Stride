@@ -22,6 +22,7 @@ extension HealthFixture {
 ///          | metric:<load | acwr | sleep | restingHR | hrv | steps | weight>
 ///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis;
 ///                         on the progress route: trend, compare, records, or achievements; on the plan route: adherence
+///   -planSheet <sheet>    on the plan route, open week (the week editor), edit:<n> or time:<n> for the day n days from today
 ///   -analyze YES          review the first opened workout
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
@@ -159,6 +160,30 @@ extension AppModel {
             }
         }
 
+        if !athleteDays.isEmpty {
+            state["athleteDays"] = athleteDays.map { PromptBuilder.dayLabel($0.date, calendar: .current) + ": " + $0.day.briefDescription }
+        }
+        let schedule = self.schedule
+        state["schedule"] = [
+            "active": schedule.isActive,
+            "calendarAccess": "\(schedule.calendarAccess)",
+            "weatherSource": schedule.forecast?.source.rawValue ?? NSNull(),
+            "forecastHours": schedule.forecast?.hours.count ?? 0,
+            "weatherError": schedule.weatherError ?? NSNull(),
+            "days": schedule.days.map { day in
+                [
+                    "day": PromptBuilder.dayLabel(day.date, calendar: .current),
+                    "session": day.session.briefDescription,
+                    "scheduled": day.scheduled.map { iso.string(from: $0.start) } ?? NSNull(),
+                    "note": day.note ?? NSNull(),
+                    "slots": day.slots.map { slot in
+                        "\(SessionScheduler.time(slot.start, calendar: .current))–\(SessionScheduler.time(slot.end, calendar: .current)) score \(Int(slot.score.rounded())): "
+                            + ([slot.weather?.summary].compactMap(\.self) + slot.reasons + slot.warnings).joined(separator: ", ")
+                    },
+                ] as [String: Any]
+            },
+        ] as [String: Any]
+
         if let metrics {
             let ind = metrics.indicators
             state["indicators"] = [
@@ -186,6 +211,8 @@ extension AppModel {
                 "recentDays": toolbox.recentDays(7),
                 "workouts": toolbox.workouts(days: 14, sport: "running"),
                 "plan": toolbox.plan(),
+                "freeTimes": toolbox.freeTimes(day: ""),
+                "weather": toolbox.weather(day: PromptBuilder.dayLabel(.now, calendar: .current)),
             ]
         }
         if let progress {

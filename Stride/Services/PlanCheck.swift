@@ -68,21 +68,33 @@ nonisolated enum PlanRepair {
         """
 
     /// Normalizes the plan, then gives the model one chance to fix the problems left. Keeps the fix only when it has
-    /// fewer problems. Returns the problems that remain.
+    /// fewer problems. Returns the problems that remain. `pinned` days (by position) are the athlete's own and are
+    /// put back as they are, whatever the model wrote for them.
     static func run(
         _ report: inout AnalysisReport,
         labels: [String],
         profile: UserProfile,
+        pinned: [Int: PlannedDay] = [:],
         log: (String) -> Void = { _ in },
         generate: (_ instructions: String, _ prompt: String) async throws -> WeekPlan
     ) async -> [String] {
-        report.weekPlan = PlanCheck.normalized(report.weekPlan, labels: labels)
+        func normalized(_ plan: [PlannedDay]) -> [PlannedDay] {
+            var plan = plan
+            if plan.count == labels.count {
+                for (index, day) in pinned where plan.indices.contains(index) { plan[index] = day }
+            }
+            return PlanCheck.normalized(plan, labels: labels)
+        }
+        report.weekPlan = normalized(report.weekPlan)
         let problems = PlanCheck.problems(report.weekPlan, labels: labels, profile: profile)
         guard !problems.isEmpty else { return [] }
         log("Plan check: \(problems.joined(separator: " "))")
-        let prompt = prompt(plan: report.weekPlan, problems: problems, profile: profile, reasoning: "\(report.headline) \(report.assessment)")
+        let prompt = prompt(
+            plan: report.weekPlan, problems: problems, profile: profile, reasoning: "\(report.headline) \(report.assessment)",
+            pinnedLabels: pinned.keys.sorted().compactMap { labels.indices.contains($0) ? labels[$0] : nil }
+        )
         do {
-            let plan = PlanCheck.normalized(try await generate(instructions, prompt).days, labels: labels)
+            let plan = normalized(try await generate(instructions, prompt).days)
             let remaining = PlanCheck.problems(plan, labels: labels, profile: profile)
             log("Plan repair: \(problems.count) → \(remaining.count) problems")
             // A plan with the wrong number of days reports just that one problem, so it never counts as better.
@@ -96,7 +108,7 @@ nonisolated enum PlanRepair {
         return problems
     }
 
-    static func prompt(plan: [PlannedDay], problems: [String], profile: UserProfile, reasoning: String) -> String {
+    static func prompt(plan: [PlannedDay], problems: [String], profile: UserProfile, reasoning: String, pinnedLabels: [String] = []) -> String {
         var lines = [
             "ATHLETE: \(profile.trainingDaysPerWeek) training days and \(PromptBuilder.num(profile.weeklyHoursAvailable, 1)) h a week at most.",
             "WHY THE PLAN LOOKS LIKE THIS: \(reasoning)",
@@ -107,6 +119,10 @@ nonisolated enum PlanRepair {
         lines.append("")
         lines.append("PROBLEMS")
         lines += problems.map { "- \($0)" }
+        if !pinnedLabels.isEmpty {
+            lines.append("")
+            lines.append("The athlete planned \(pinnedLabels.joined(separator: ", ")) themselves: keep these days exactly and fix the others.")
+        }
         lines.append("")
         lines.append("Return the full corrected 7-day plan.")
         return lines.joined(separator: "\n")
