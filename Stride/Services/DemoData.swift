@@ -33,17 +33,8 @@ nonisolated enum DemoData {
 
             let bedtimeMinutes = (ramp ? 23 * 60 + 40 : 22 * 60 + 50) + Int.random(in: -40...50, using: &rng)
             let asleep = (ramp ? 6.3 : 7.4) + Double.random(in: -0.6...0.6, using: &rng)
-            if let previousDay = calendar.date(byAdding: .day, value: -1, to: day),
-               let bedtime = calendar.date(byAdding: .minute, value: bedtimeMinutes, to: previousDay) {
-                sleep.append(SleepNight(
-                    date: day,
-                    bedtime: bedtime,
-                    wakeTime: bedtime.addingTimeInterval((asleep + 0.4) * 3600),
-                    asleepHours: asleep,
-                    deepHours: asleep * 0.17,
-                    remHours: asleep * 0.22,
-                    awakeHours: 0.4
-                ))
+            if let night = sleepNight(on: day, bedtimeMinutes: bedtimeMinutes, asleep: asleep, calendar: calendar) {
+                sleep.append(night)
             }
 
             // (sport, minutes, avg HR, km per minute)
@@ -58,19 +49,7 @@ nonisolated enum DemoData {
             }
             if let (sport, minutes, heartRate, kmPerMinute) = plan, offset > 0,
                let start = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: day) {
-                let duration = minutes + Double.random(in: -5...8, using: &rng)
-                workouts.append(WorkoutSummary(
-                    // Derived from the start so saved coach reviews still match after a relaunch.
-                    id: UUID(uuidString: String(format: "00000000-0000-4000-8000-%012llx", UInt64(start.timeIntervalSince1970)))!,
-                    start: start,
-                    durationMinutes: duration,
-                    sport: sport,
-                    distanceKm: kmPerMinute > 0 ? duration * kmPerMinute : nil,
-                    activeEnergyKcal: duration * 11,
-                    averageHeartRate: heartRate + Double.random(in: -4...4, using: &rng),
-                    maxHeartRate: heartRate + 18,
-                    sourceName: "Demo"
-                ))
+                workouts.append(workout(start: start, sport: sport, minutes: minutes, heartRate: heartRate, kmPerMinute: kmPerMinute, rng: &rng))
             }
         }
 
@@ -112,17 +91,8 @@ nonisolated extension DemoData {
 
             let asleep = 6.9 + 0.5 * fitness + Double.random(in: -0.7...0.7, using: &rng)
             let bedtimeMinutes = 23 * 60 + Int.random(in: -50...50, using: &rng)
-            if let previousDay = calendar.date(byAdding: .day, value: -1, to: day),
-               let bedtime = calendar.date(byAdding: .minute, value: bedtimeMinutes, to: previousDay) {
-                sleep.append(SleepNight(
-                    date: day,
-                    bedtime: bedtime,
-                    wakeTime: bedtime.addingTimeInterval((asleep + 0.4) * 3600),
-                    asleepHours: asleep,
-                    deepHours: asleep * 0.17,
-                    remHours: asleep * 0.22,
-                    awakeHours: 0.4
-                ))
+            if let night = sleepNight(on: day, bedtimeMinutes: bedtimeMinutes, asleep: asleep, calendar: calendar) {
+                sleep.append(night)
             }
 
             guard !isBreak else { continue }
@@ -140,20 +110,43 @@ nonisolated extension DemoData {
             // Skip about one session in eight, like real life.
             guard let (sport, minutes, heartRate, kmPerMinute) = plan, Double.random(in: 0...1, using: &rng) > 0.12,
                   let workoutStart = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: day) else { continue }
-            let duration = minutes + Double.random(in: -5...8, using: &rng)
-            workouts.append(WorkoutSummary(
-                id: UUID(uuidString: String(format: "00000000-0000-4000-8000-%012llx", UInt64(workoutStart.timeIntervalSince1970)))!,
-                start: workoutStart,
-                durationMinutes: duration,
-                sport: sport,
-                distanceKm: kmPerMinute > 0 ? duration * kmPerMinute : nil,
-                activeEnergyKcal: duration * 11,
-                averageHeartRate: heartRate + Double.random(in: -4...4, using: &rng),
-                maxHeartRate: heartRate + 18,
-                sourceName: "Demo"
-            ))
+            workouts.append(workout(start: workoutStart, sport: sport, minutes: minutes, heartRate: heartRate, kmPerMinute: kmPerMinute, rng: &rng))
         }
         return HealthSnapshot(fetchedAt: start, days: dailyMetrics, sleep: sleep, workouts: workouts, isDemo: true)
+    }
+
+    /// The night ending on `day`, going to bed `bedtimeMinutes` after the previous midnight.
+    private static func sleepNight(on day: Date, bedtimeMinutes: Int, asleep: Double, calendar: Calendar) -> SleepNight? {
+        guard let previousDay = calendar.date(byAdding: .day, value: -1, to: day),
+              let bedtime = calendar.date(byAdding: .minute, value: bedtimeMinutes, to: previousDay) else { return nil }
+        return SleepNight(
+            date: day,
+            bedtime: bedtime,
+            wakeTime: bedtime.addingTimeInterval((asleep + 0.4) * 3600),
+            asleepHours: asleep,
+            deepHours: asleep * 0.17,
+            remHours: asleep * 0.22,
+            awakeHours: 0.4
+        )
+    }
+
+    /// A workout of about `minutes` (randomized like the heart rate) at a steady speed.
+    private static func workout(
+        start: Date, sport: String, minutes: Double, heartRate: Double, kmPerMinute: Double, rng: inout SeededGenerator
+    ) -> WorkoutSummary {
+        let duration = minutes + Double.random(in: -5...8, using: &rng)
+        return WorkoutSummary(
+            // Derived from the start so saved coach reviews still match after a relaunch.
+            id: UUID(uuidString: String(format: "00000000-0000-4000-8000-%012llx", UInt64(start.timeIntervalSince1970)))!,
+            start: start,
+            durationMinutes: duration,
+            sport: sport,
+            distanceKm: kmPerMinute > 0 ? duration * kmPerMinute : nil,
+            activeEnergyKcal: duration * 11,
+            averageHeartRate: heartRate + Double.random(in: -4...4, using: &rng),
+            maxHeartRate: heartRate + 18,
+            sourceName: "Demo"
+        )
     }
 
     static func detail(for workout: WorkoutSummary) -> WorkoutDetail {

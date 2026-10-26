@@ -27,7 +27,7 @@ uv run --quiet tools/stride-mcp/server.py cli coarsen-fixture /tmp/demo.json /tm
 uv run --quiet tools/stride-mcp/server.py cli launch --fixture /tmp/coarse.json --route workout:latest-run
 ```
 
-The same tools are exposed as the `stride-simulator` MCP server via `.mcp.json`. It uses a dedicated simulator named "Stride Test" (created on first use). Routes: `dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid>` (`--scroll-to adherence` and `--sheet week|edit:<n>|time:<n>` on `plan`; the `chat` route also dumps the chat tools' output to `state coachTools`); `--analyze` runs the analysis for the opened workout. The app side of these hooks is `Stride/AppModel+Debug.swift` (debug builds only).
+The same tools are exposed as the `stride-simulator` MCP server via `.mcp.json`. It uses a dedicated simulator named "Stride Test" (created on first use). Routes: `dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid> | skill:<name> | metric:<name>` (`--scroll-to adherence` and `--sheet week|edit:<n>|time:<n>` on `plan`; the `chat` route also dumps the chat tools' output to `state coachTools`); `--analyze` runs the analysis for the opened workout. The app side of these hooks is `Stride/AppModel+Debug.swift` (debug builds only).
 
 Pure logic (models, metrics, prompt builders, plan checks, readiness, demo data) has no UIKit/HealthKit dependency and is compiled into the macOS harness in `tools/eval`:
 

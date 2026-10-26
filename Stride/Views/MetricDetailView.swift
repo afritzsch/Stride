@@ -177,16 +177,7 @@ private struct LoadDetail: View {
             if lastWeek.isEmpty {
                 Text("No workouts in the last 7 days.").font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(lastWeek) { workout in
-                NavigationLink(value: DashboardDestination.workout(workout)) {
-                    HStack {
-                        WorkoutRow(workout: workout)
-                        LinkChevron()
-                    }
-                }
-                .buttonStyle(.plain)
-                if workout.id != lastWeek.last?.id { Divider() }
-            }
+            WorkoutLinkRows(workouts: lastWeek)
         }
         ExplanationCard(paragraphs: [
             "Each workout gets a load score from how long it was and how hard your heart worked: its average heart rate between your resting and maximum heart rate (Banister's TRIMP). Hard minutes count much more than easy ones: an easy hour scores about 50, an hour near threshold 150 or more.",

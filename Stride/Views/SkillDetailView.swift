@@ -75,10 +75,7 @@ struct SkillDetailView: View {
         let buckets = progress.skillBuckets(skill, granularity: granularity)
         let values = buckets.compactMap(\.value)
         return Card(title: "XP earned") {
-            Picker("Period", selection: $granularity) {
-                ForEach(ProgressGranularity.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
+            GranularityPicker(selection: $granularity)
             Chart {
                 ForEach(buckets, id: \.start) { bucket in
                     BarMark(x: .value("Period", bucket.start, unit: granularity.component), y: .value("XP", bucket.value ?? 0))

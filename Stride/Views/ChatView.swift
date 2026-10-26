@@ -5,7 +5,6 @@ struct ChatView: View {
     @Environment(AppModel.self) private var model
     var chat: CoachChat
     @State private var draft = ""
-    @FocusState private var isFocused: Bool
 
     private static let suggestions = [
         "How did my last run go?",
@@ -66,7 +65,6 @@ struct ChatView: View {
         HStack(alignment: .bottom, spacing: 8) {
             TextField("Message", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
-                .focused($isFocused)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(.background.secondary, in: .rect(cornerRadius: 20))

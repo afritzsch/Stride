@@ -31,7 +31,8 @@ struct Scenario {
     /// The labels the weekly prompt asks for.
     var planLabels: [String] { (1...7).map(label) }
 
-    /// Saves `history` (plus a current plan from tomorrow) and `reviews` as the app's JSON stores.
+    /// Saves `history` (plus a current plan from tomorrow) and `reviews` as the app's JSON stores, and today's
+    /// adjustment as `today-adjustment.json` (the app keeps that in UserDefaults under `todayAdjustment`).
     func seed(into directory: URL) throws {
         let labels = planLabels
         let upcoming = AnalysisReport(

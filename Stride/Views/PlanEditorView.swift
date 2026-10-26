@@ -98,7 +98,7 @@ struct PlanDayEditor: View {
                     }
                 }
             }
-            .navigationTitle(date.formatted(.dateTime.weekday(.wide).day().month()))
+            .navigationTitle(Format.day(date))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -151,7 +151,7 @@ struct WeekPlanEditor: View {
                     ForEach(dates.indices, id: \.self) { index in
                         NavigationLink {
                             Form { PlanDayForm(day: $drafts[index], defaultSport: model.defaultPlanSport) }
-                                .navigationTitle(dates[index].formatted(.dateTime.weekday(.wide).day().month()))
+                                .navigationTitle(Format.day(dates[index]))
                                 .navigationBarTitleDisplayMode(.inline)
                         } label: {
                             row(index)
@@ -189,7 +189,7 @@ struct WeekPlanEditor: View {
             }
             Spacer()
             if day.durationMinutes > 0 {
-                Text("\(day.durationMinutes) min" + (day.targetZone > 0 ? " · Z\(day.targetZone)" : "")).foregroundStyle(.secondary)
+                Text(day.durationAndZone).foregroundStyle(.secondary)
             }
             if day != original[index] {
                 Image(systemName: "pencil.circle.fill").foregroundStyle(.blue).accessibilityLabel("Changed")

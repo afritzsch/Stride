@@ -129,6 +129,24 @@ struct StatusBadge: View {
     }
 }
 
+/// A status badge and which model wrote it when, the top line of a saved analysis or workout review.
+struct GeneratedHeader: View {
+    var status: String
+    var color: Color
+    var modelName: String
+    var createdAt: Date
+
+    var body: some View {
+        HStack {
+            StatusBadge(text: status, color: color)
+            Spacer()
+            Text("\(modelName) · \(createdAt.formatted(.relative(presentation: .named)))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 extension Color {
     /// Heart-rate zone colors, Z1 (index 0) to Z5; the accent color for nil (no reading).
     static func heartRateZone(_ index: Int?) -> Color {
@@ -220,5 +238,24 @@ enum Format {
         let diff = ((current - baseline) * factor).rounded() / factor
         let sign = diff < 0 ? "−" : "+"
         return "\(sign)\(abs(diff).formatted(.number.precision(.fractionLength(digits))))\(unit) vs 4-wk avg"
+    }
+
+    /// "Thursday 30 Oct", for day screens and sheets.
+    static func day(_ date: Date) -> String {
+        date.formatted(.dateTime.weekday(.wide).day().month())
+    }
+}
+
+nonisolated extension PlannedDay {
+    /// "45 min · Z2"; the zone only when there's a target.
+    var durationAndZone: String {
+        "\(durationMinutes) min" + (targetZone > 0 ? " · Z\(targetZone)" : "")
+    }
+}
+
+nonisolated extension WorkoutSummary {
+    /// "Running 42 min".
+    var sportAndMinutes: String {
+        "\(sport) \(Int(durationMinutes.rounded())) min"
     }
 }

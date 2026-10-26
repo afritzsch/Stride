@@ -159,9 +159,8 @@ nonisolated struct PromptBuilder {
             lines.append("FREE TIME (day | free time in the calendar, from the athlete's earliest to latest training time | weather)")
             lines += availability
         }
-        let plan = TrainingPlan(analyses: history, athleteDays: athleteDays)
         let labels = Self.planLabels(start: planStart, calendar: calendar)
-        let pinned = plan.pinnedDays(start: planStart, calendar: calendar).sorted { $0.key < $1.key }
+        let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar).sorted { $0.key < $1.key }
         if !pinned.isEmpty {
             lines.append("")
             lines.append("THE ATHLETE'S OWN PLAN (day | session | details); keep these days exactly")
@@ -175,11 +174,13 @@ nonisolated struct PromptBuilder {
         return lines.joined(separator: "\n")
     }
 
+    private var trainingPlan: TrainingPlan { TrainingPlan(analyses: history, athleteDays: athleteDays) }
+
     /// Plan vs actual, the athlete's session notes and earlier verdicts, so each analysis builds on the last.
     private var memorySections: [String] {
         var lines: [String] = []
         let adherence = PlanAdherence(
-            plan: TrainingPlan(analyses: history, athleteDays: athleteDays),
+            plan: trainingPlan,
             workouts: snapshot.workouts,
             zones: metrics.heartRateZones,
             now: snapshot.fetchedAt,

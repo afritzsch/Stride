@@ -428,13 +428,12 @@ private struct RunAnalysisContent: View {
     var body: some View {
         VStack(spacing: 16) {
             Card {
-                HStack {
-                    StatusBadge(text: analysis.effort.rawValue.capitalized, color: analysis.effort.color)
-                    Spacer()
-                    Text("\(saved.modelName) · \(saved.createdAt.formatted(.relative(presentation: .named)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                GeneratedHeader(
+                    status: analysis.effort.rawValue.capitalized,
+                    color: analysis.effort.color,
+                    modelName: saved.modelName,
+                    createdAt: saved.createdAt
+                )
                 Text(analysis.headline).font(.title3.bold())
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(analysis.summary, id: \.self) { point in

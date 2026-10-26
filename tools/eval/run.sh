@@ -5,6 +5,7 @@
 #   tools/eval/run.sh                  offline checks of plan adherence, plan checks, prompts and time suggestions
 #   tools/eval/run.sh model            also runs the on-device model on demo scenarios (needs Apple Intelligence)
 #   tools/eval/run.sh prompt [compact] prints the weekly prompt for the demo data
+#   tools/eval/run.sh seed <dir>       writes saved analyses, a review and today's adjustment in the app's format
 set -e
 cd "$(dirname "$0")/../.."
 out=build/eval

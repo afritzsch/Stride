@@ -76,9 +76,10 @@ nonisolated struct MetricsReport: Sendable {
         func since(_ days: Int) -> Date { calendar.date(byAdding: .day, value: -(days - 1), to: today) ?? today }
         let start7 = since(7), start14 = since(14), start28 = since(28)
 
+        let days7 = snapshot.days.filter { $0.date >= start7 }
+        let days28 = snapshot.days.filter { $0.date >= start28 }
         var ind = TrainingIndicators()
-        let recentRHR = snapshot.days.filter { $0.date >= start28 }.compactMap(\.restingHeartRate)
-        ind.restingHRBaseline = Self.median(recentRHR) ?? 60
+        ind.restingHRBaseline = Self.median(days28.compactMap(\.restingHeartRate)) ?? 60
         let zones = profile.heartRateZones(restingHR: ind.restingHRBaseline)
 
         var workoutLoad: [UUID: Double] = [:]
@@ -119,8 +120,6 @@ nonisolated struct MetricsReport: Sendable {
             day = calendar.date(byAdding: .day, value: -1, to: day) ?? day
         }
 
-        let days7 = snapshot.days.filter { $0.date >= start7 }
-        let days28 = snapshot.days.filter { $0.date >= start28 }
         ind.restingHR7 = Self.mean(days7.compactMap(\.restingHeartRate))
         ind.restingHR28 = Self.mean(days28.compactMap(\.restingHeartRate))
         ind.hrv7 = Self.mean(days7.compactMap(\.hrvMs))
