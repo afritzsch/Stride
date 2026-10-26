@@ -56,6 +56,8 @@ struct SettingsView: View {
                     Stepper("Time: \(Format.number(model.profile.weeklyHoursAvailable, digits: 1)) h/week", value: $model.profile.weeklyHoursAvailable, in: 1...25, step: 0.5)
                 }
 
+                ScheduleSettingsSection()
+
                 Section("Goal") {
                     Toggle("Training for an event", isOn: $model.profile.hasGoal)
                     if model.profile.hasGoal {

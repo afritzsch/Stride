@@ -52,6 +52,7 @@ struct DashboardView: View {
             }
             .refreshable { await model.refresh() }
             .task(id: model.snapshot?.fetchedAt) {
+                await model.schedule.refresh()
                 await model.adjustTodayIfNeeded(automatically: true)
                 await model.reviewNewWorkouts()
             }
@@ -105,6 +106,7 @@ private struct NoDataCard: View {
 /// Today's planned session next to this morning's recovery signals, with a lighter version when they're off.
 private struct TodayCard: View {
     @Environment(AppModel.self) private var model
+    @State private var picksTime = false
 
     var body: some View {
         let readiness = model.readiness
@@ -144,12 +146,16 @@ private struct TodayCard: View {
             } else if let planned = model.todaysPlan {
                 PlannedLine(day: planned, prefix: "Planned")
                 adjustment(for: planned, readiness: readiness)
+                if let schedule = model.schedule.schedule(on: .now) {
+                    SessionTimeLine(schedule: schedule) { picksTime = true }
+                }
             } else {
-                Text("No session planned for today. Run an analysis on the AI Coach tab to get a plan.")
+                Text("No session planned for today. Run an analysis on the AI Coach tab to get a plan, or plan the day yourself on the Plan tab.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
+        .sheet(isPresented: $picksTime) { SlotPickerView(date: .now) }
     }
 
     @ViewBuilder

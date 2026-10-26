@@ -49,12 +49,12 @@ nonisolated struct PlanAdherence: Sendable {
     var days: [Day]
 
     /// Planned days from `days` back up to today. Today counts once something was recorded, otherwise it's pending.
-    init(history: [SavedAnalysis], workouts: [WorkoutSummary], zones: HeartRateZones, days: Int = 7, now: Date = .now, calendar: Calendar = .current) {
+    init(plan: TrainingPlan, workouts: [WorkoutSummary], zones: HeartRateZones, days: Int = 7, now: Date = .now, calendar: Calendar = .current) {
         let today = calendar.startOfDay(for: now)
         let workoutsByDay = Dictionary(grouping: workouts) { calendar.startOfDay(for: $0.start) }
         self.days = (0...days).reversed().compactMap { offset -> Day? in
             guard let date = calendar.date(byAdding: .day, value: -offset, to: today),
-                  let planned = history.plannedDay(on: date, calendar: calendar) else { return nil }
+                  let planned = plan.plannedDay(on: date, calendar: calendar) else { return nil }
             let done = workoutsByDay[date] ?? []
             if date == today, done.isEmpty {
                 return Day(date: date, planned: planned, workouts: [], status: .pending, notes: [])

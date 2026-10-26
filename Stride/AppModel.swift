@@ -48,6 +48,8 @@ final class AppModel {
     private var archive: HealthSnapshot?
 
     private(set) var history: [SavedAnalysis]
+    /// Days the athlete planned or changed themselves; they win over the coach's plans.
+    private(set) var athleteDays: [AthletePlanDay]
     private(set) var isAnalyzing = false
     /// Workouts with a coach review in flight, so leaving and reopening a workout can't start a second one.
     private(set) var analyzingWorkoutIDs: Set<UUID> = []
@@ -69,6 +71,8 @@ final class AppModel {
     private(set) var isAdjustingToday = false
     /// The "Ask the coach" conversation, kept while the app runs.
     @ObservationIgnored private(set) lazy var chat = CoachChat(model: self)
+    /// Suggested times for planned sessions, from the calendar and the forecast.
+    @ObservationIgnored private(set) lazy var schedule = ScheduleModel(model: self)
     private(set) var adjustmentError: String?
 
     var selectedTab = AppTab.dashboard
@@ -118,6 +122,7 @@ final class AppModel {
         allowPrivateCloud = defaults.object(forKey: Keys.privateCloud) != nil ? defaults.bool(forKey: Keys.privateCloud) : true
         autoReviewWorkouts = defaults.object(forKey: Keys.autoReview) != nil ? defaults.bool(forKey: Keys.autoReview) : true
         history = JSONStore.load([SavedAnalysis].self, from: JSONStore.analyses) ?? []
+        athleteDays = JSONStore.load([AthletePlanDay].self, from: JSONStore.athletePlan) ?? []
         todayAdjustment = defaults.data(forKey: Keys.todayAdjustment)
             .flatMap { try? JSONDecoder().decode(SavedAdjustment.self, from: $0) }
             .flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
@@ -268,10 +273,13 @@ final class AppModel {
 
         let calendar = Calendar.current
         let planStart = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: .now)) ?? .now
+        await schedule.refresh()
+        let availability = (full: schedule.availability(start: planStart, compact: false), compact: schedule.availability(start: planStart, compact: true))
         func prompt(compact: Bool) -> String {
             PromptBuilder(
                 snapshot: snapshot, metrics: metrics, profile: profile, planStart: planStart, compact: compact,
-                history: history, reviews: runAnalyses
+                history: history, reviews: runAnalyses, athleteDays: athleteDays,
+                availability: compact ? availability.compact : availability.full
             ).prompt
         }
 
@@ -284,7 +292,8 @@ final class AppModel {
             ) { [weak self] partial in self?.analysisPreview = partial }
             var report = result.output
             let labels = PromptBuilder.planLabels(start: planStart, calendar: calendar)
-            let planNotice = await checkPlan(&report, labels: labels)
+            let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar)
+            let planNotice = await checkPlan(&report, labels: labels, pinned: pinned)
             analysisNotice = [result.notice, planNotice].compactMap(\.self).joined(separator: " ").nilIfEmpty
             let saved = SavedAnalysis(createdAt: .now, modelName: result.modelName, planStartDate: planStart, report: report)
             history = Array(([saved] + history).prefix(Self.maxSavedAnalyses))
@@ -297,8 +306,8 @@ final class AppModel {
 
     /// Fixes labels and rest days in code, then asks the model once to fix rules it broke (hours, training days,
     /// back-to-back hard days). Returns a notice when problems remain.
-    private func checkPlan(_ report: inout AnalysisReport, labels: [String]) async -> String? {
-        let problems = await PlanRepair.run(&report, labels: labels, profile: profile, log: { debugLog($0) }) { instructions, prompt in
+    private func checkPlan(_ report: inout AnalysisReport, labels: [String], pinned: [Int: PlannedDay]) async -> String? {
+        let problems = await PlanRepair.run(&report, labels: labels, profile: profile, pinned: pinned, log: { debugLog($0) }) { instructions, prompt in
             analysisStep = "Fixing the plan…"
             analysisPreview?.weekPlan = nil
             return try await generate(WeekPlan.self, instructions: instructions, fullPrompt: prompt, compactPrompt: prompt).output
@@ -457,38 +466,77 @@ final class AppModel {
         if accept {
             var session = adjustment.adjustment.session
             session.details = [adjustment.adjustment.reason, session.details].filter { !$0.isEmpty }.joined(separator: " ")
-            guard updatePlannedDay(on: adjustment.date, with: session) else { return }
+            updatePlannedDay(on: adjustment.date, with: session)
         }
         adjustment.state = accept ? .accepted : .declined
         todayAdjustment = adjustment
     }
 
-    /// Replaces a day in the newest plan that covers it. Returns false when no saved plan covers the date.
-    @discardableResult
-    func updatePlannedDay(on date: Date, with day: PlannedDay) -> Bool {
+    /// A coach change to one day (the readiness adjustment, the chat): it changes the athlete's own day if there is
+    /// one, otherwise the newest plan that covers the date, otherwise it becomes an athlete day.
+    func updatePlannedDay(on date: Date, with day: PlannedDay) {
         let calendar = Calendar.current
+        var day = day
+        day.day = PromptBuilder.dayLabel(date, calendar: calendar)
+        if trainingPlan.athleteDay(on: date, calendar: calendar) != nil {
+            setAthleteDay(day, on: date)
+            return
+        }
         for (index, analysis) in history.enumerated() {
             guard analysis.plannedDay(on: date, calendar: calendar) != nil,
                   let offset = calendar.dateComponents([.day], from: calendar.startOfDay(for: analysis.planStartDate), to: calendar.startOfDay(for: date)).day
             else { continue }
-            var day = day
-            day.day = PromptBuilder.dayLabel(date, calendar: calendar)
             history[index].report.weekPlan[offset] = day
             JSONStore.save(history, to: JSONStore.analyses)
-            return true
+            schedule.sessionChanged(on: date)
+            return
         }
-        return false
+        setAthleteDay(day, on: date)
     }
+
+    /// Saves a day the athlete planned. Days more than 60 days old are dropped, since nothing looks that far back.
+    func setAthleteDay(_ day: PlannedDay, on date: Date) {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: date)
+        var day = PlanCheck.normalized([day], labels: [PromptBuilder.dayLabel(start, calendar: calendar)])[0]
+        if day.session.trimmingCharacters(in: .whitespaces).isEmpty { day.session = day.defaultTitle }
+        let cutoff = calendar.date(byAdding: .day, value: -60, to: calendar.startOfDay(for: .now)) ?? start
+        athleteDays = athleteDays.filter { !calendar.isDate($0.date, inSameDayAs: start) && $0.date >= cutoff }
+            + [AthletePlanDay(date: start, day: day, savedAt: .now)]
+        athleteDays.sort { $0.date < $1.date }
+        JSONStore.save(athleteDays, to: JSONStore.athletePlan)
+        schedule.sessionChanged(on: start)
+        writeDebugState()
+    }
+
+    /// Goes back to the coach's plan for a date.
+    func removeAthleteDay(on date: Date) {
+        athleteDays.removeAll { Calendar.current.isDate($0.date, inSameDayAs: date) }
+        JSONStore.save(athleteDays, to: JSONStore.athletePlan)
+        schedule.sessionChanged(on: date)
+        writeDebugState()
+    }
+
+    var trainingPlan: TrainingPlan { TrainingPlan(analyses: history, athleteDays: athleteDays) }
 
     /// How the planned days of the last week went.
     var planAdherence: PlanAdherence? {
         guard let snapshot, let metrics else { return nil }
-        return PlanAdherence(history: history, workouts: snapshot.workouts, zones: metrics.heartRateZones)
+        return PlanAdherence(plan: trainingPlan, workouts: snapshot.workouts, zones: metrics.heartRateZones)
     }
 
-    /// The session the latest weekly plan had for that day, if the plan covers it.
+    /// The session planned for that day: the athlete's own, else the newest weekly plan that covers it.
     func plannedSession(on date: Date) -> PlannedDay? {
-        history.plannedDay(on: date)
+        trainingPlan.plannedDay(on: date)
+    }
+
+    func isAthletePlanned(on date: Date) -> Bool {
+        trainingPlan.athleteDay(on: date) != nil
+    }
+
+    /// What the coach planned for that day, ignoring the athlete's change.
+    func coachSession(on date: Date) -> PlannedDay? {
+        trainingPlan.coachDay(on: date)
     }
 
     private func generate<Output: Generable & Sendable>(

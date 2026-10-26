@@ -11,6 +11,10 @@ nonisolated struct PromptBuilder {
     var history: [SavedAnalysis] = []
     /// Coach reviews by workout ID, with the athlete's notes.
     var reviews: [UUID: SavedRunAnalysis] = [:]
+    /// Days the athlete planned themselves. They count for plan vs actual, and the new plan keeps them.
+    var athleteDays: [AthletePlanDay] = []
+    /// Free time and rain per plan day (`SessionScheduler.availabilityLine`), empty when the calendar isn't used.
+    var availability: [String] = []
     var calendar = Calendar.current
 
     static let instructions = """
@@ -34,6 +38,10 @@ nonisolated struct PromptBuilder {
         make the plan fit the athlete's real routine.
         - SESSION FEEDBACK holds the athlete's own words after sessions. Take pain, illness or unusual fatigue \
         seriously and adjust the plan for it.
+        - THE ATHLETE'S OWN PLAN lists days the athlete already planned: copy them exactly into the plan and plan \
+        the other days around them, including rest and hard-easy spacing.
+        - FREE TIME shows open time in the athlete's calendar and the forecast: put long sessions on days with \
+        enough free time, and outdoor sessions away from rain when you can.
         - COACH LOG lists your earlier verdicts. Stay consistent with them unless the data changed, and then say \
         what changed.
         - Body weight is context, not a target: mention it only when it matters for training (e.g. a fast drop \
@@ -146,8 +154,24 @@ nonisolated struct PromptBuilder {
 
         lines.append(contentsOf: memorySections)
 
+        if !availability.isEmpty {
+            lines.append("")
+            lines.append("FREE TIME (day | free time in the calendar, from the athlete's earliest to latest training time | weather)")
+            lines += availability
+        }
+        let plan = TrainingPlan(analyses: history, athleteDays: athleteDays)
+        let labels = Self.planLabels(start: planStart, calendar: calendar)
+        let pinned = plan.pinnedDays(start: planStart, calendar: calendar).sorted { $0.key < $1.key }
+        if !pinned.isEmpty {
+            lines.append("")
+            lines.append("THE ATHLETE'S OWN PLAN (day | session | details); keep these days exactly")
+            for (index, day) in pinned {
+                lines.append("\(labels[index]) | \(day.briefDescription) | \(Self.quote(day.details))")
+            }
+        }
+
         lines.append("")
-        lines.append("Write the 7-day plan for these days, in this order, using these exact labels: \(Self.planLabels(start: planStart, calendar: calendar).joined(separator: ", ")).")
+        lines.append("Write the 7-day plan for these days, in this order, using these exact labels: \(labels.joined(separator: ", ")).")
         return lines.joined(separator: "\n")
     }
 
@@ -155,7 +179,7 @@ nonisolated struct PromptBuilder {
     private var memorySections: [String] {
         var lines: [String] = []
         let adherence = PlanAdherence(
-            history: history,
+            plan: TrainingPlan(analyses: history, athleteDays: athleteDays),
             workouts: snapshot.workouts,
             zones: metrics.heartRateZones,
             now: snapshot.fetchedAt,

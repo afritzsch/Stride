@@ -99,6 +99,9 @@ final class CoachChat {
                 RaceForecastTool(toolbox: toolbox),
                 PlanTool(toolbox: toolbox),
                 ChangePlanDayTool(toolbox: toolbox),
+                FreeTimesTool(toolbox: toolbox),
+                WeatherTool(toolbox: toolbox),
+                ScheduleSessionTool(toolbox: toolbox),
             ],
             instructions: Self.instructions(model: model)
         )
@@ -116,7 +119,8 @@ final class CoachChat {
             are. For race times, call raceForecast and quote its times exactly; never calculate a time yourself. \
             Projecting from their data is coaching, not inventing data, and a training prognosis is not medical \
             advice. Change the plan only when the athlete asks for it, keep changes consistent with their \
-            availability, and tell them what you changed. Only for pain, injury or illness, recommend seeing a \
+            availability, and tell them what you changed. For when to train, use freeTimes (calendar and weather); add a \
+            session to the calendar only when the athlete asks. Only for pain, injury or illness, recommend seeing a \
             professional. Answer in a few short sentences, addressing the athlete as "you".
             """,
             "",
@@ -361,9 +365,7 @@ final class CoachToolbox {
         }
         var day = PlanCheck.normalized([day], labels: [day.day])[0]
         day.day = PromptBuilder.dayLabel(date, calendar: calendar)
-        guard model.updatePlannedDay(on: date, with: day) else {
-            return "There's no saved plan for \(day.day). The athlete needs to run a weekly analysis first."
-        }
+        model.updatePlannedDay(on: date, with: day)
         chat?.notice("Plan changed: \(day.day) is now \(day.isRest ? "a rest day" : "\(day.session), \(day.durationMinutes) min").")
 
         // Check the week around the change against the athlete's limits.
@@ -374,6 +376,100 @@ final class CoachToolbox {
         return problems.isEmpty
             ? "Saved \(day.day): \(day.briefDescription)."
             : "Saved \(day.day): \(day.briefDescription). The next 7 days now break these rules: \(problems.joined(separator: " ")) Tell the athlete, and fix it if they agree."
+    }
+
+    /// Today and the next 7 days whose label matches, or all of them for an empty label.
+    private func comingDates(matching label: String) -> [Date]? {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: .now)
+        let dates = (0..<8).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+        let label = label.trimmingCharacters(in: .whitespaces)
+        guard !label.isEmpty else { return dates }
+        let matching = dates.filter { PromptBuilder.dayLabel($0, calendar: calendar).caseInsensitiveCompare(label) == .orderedSame }
+        return matching.isEmpty ? nil : matching
+    }
+
+    private var scheduleOff: String {
+        "Time suggestions are off. The athlete can turn them on in Settings under Calendar & weather."
+    }
+
+    func freeTimes(day label: String) -> String {
+        chat?.setActivity("Checking your calendar…")
+        guard let schedule = model?.schedule else { return "No calendar." }
+        guard schedule.isActive else { return scheduleOff }
+        guard let dates = comingDates(matching: label) else { return "\(label) isn't today or one of the next 7 days. Use a label from getPlan." }
+        let calendar = Calendar.current
+        let time = { (date: Date) in SessionScheduler.time(date, calendar: calendar) }
+        let rows = dates.compactMap { date -> String? in
+            let dayLabel = PromptBuilder.dayLabel(date, calendar: calendar)
+            guard let day = schedule.schedule(on: date) else { return dates.count == 1 ? "\(dayLabel) | no session planned" : nil }
+            var parts = [dayLabel, day.session.briefDescription]
+            if let scheduled = day.scheduled { parts.append("in the calendar \(time(scheduled.start))–\(time(scheduled.end))") }
+            if day.slots.isEmpty {
+                parts.append(day.note ?? "no free time")
+            } else {
+                parts.append("best times: " + day.slots.map { slot in
+                    let notes = [slot.weather?.summary].compactMap(\.self) + slot.reasons + slot.warnings
+                    return "\(time(slot.start))–\(time(slot.end)) (\(notes.joined(separator: ", ")))"
+                }.joined(separator: "; "))
+            }
+            return parts.joined(separator: " | ")
+        }
+        return rows.isEmpty ? "No sessions planned in the coming days." : (["day | session | calendar and times, best first"] + rows).joined(separator: "\n")
+    }
+
+    func weather(day label: String) -> String {
+        chat?.setActivity("Checking the weather…")
+        guard let forecast = model?.schedule.forecast else { return "No forecast: weather is off or not loaded yet." }
+        guard let dates = comingDates(matching: label) else { return "\(label) isn't today or one of the next 7 days." }
+        let calendar = Calendar.current
+        let num = PromptBuilder.num
+        var lines: [String] = []
+        for date in dates.prefix(label.isEmpty ? 3 : 1) {
+            var line = PromptBuilder.dayLabel(date, calendar: calendar)
+            if let sun = forecast.sun(on: date, calendar: calendar) {
+                line += " (sunrise \(SessionScheduler.time(sun.sunrise, calendar: calendar)), sunset \(SessionScheduler.time(sun.sunset, calendar: calendar)))"
+            }
+            lines.append(line)
+            for hour in forecast.hours where calendar.isDate(hour.date, inSameDayAs: date) && calendar.component(.hour, from: hour.date) % 3 == 0 {
+                let clock = calendar.component(.hour, from: hour.date)
+                guard (6...21).contains(clock) else { continue }
+                lines.append("  \(SessionScheduler.clock(clock * 60)) \(num(hour.temperatureC, 0)) °C (feels \(num(hour.apparentTemperatureC, 0))), rain \(num(hour.precipitationChance * 100, 0))%, wind \(num(hour.windKph, 0)) km/h, \(hour.condition.title.lowercased())")
+            }
+        }
+        return lines.count <= dates.prefix(3).count ? "The forecast doesn't reach that day yet." : lines.joined(separator: "\n")
+    }
+
+    func scheduleSession(day label: String, start: String) -> String {
+        chat?.setActivity("Adding it to your calendar…")
+        guard let model else { return "No calendar." }
+        let schedule = model.schedule
+        guard schedule.isActive else { return scheduleOff }
+        guard let date = comingDates(matching: label)?.first, !label.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return "\(label) isn't today or one of the next 7 days. Use a label from getPlan."
+        }
+        let calendar = Calendar.current
+        let parts = start.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2, (0..<24).contains(parts[0]), (0..<60).contains(parts[1]),
+              let startDate = calendar.date(bySettingHour: parts[0], minute: parts[1], second: 0, of: date) else {
+            return "Give the start as HH:mm, e.g. 07:30."
+        }
+        guard let session = model.plannedSession(on: date), !session.isRest else {
+            return "Nothing is planned on \(label). Change the plan first."
+        }
+        guard startDate > .now else { return "\(start) on \(label) has already passed." }
+        let end = startDate.addingTimeInterval(TimeInterval(max(session.durationMinutes, 15) * 60))
+        if let clash = schedule.busy.first(where: { !$0.isSession && $0.start < end && $0.end > startDate }) {
+            return "That overlaps \(clash.title.isEmpty ? "an event" : clash.title) (\(SessionScheduler.time(clash.start, calendar: calendar))–\(SessionScheduler.time(clash.end, calendar: calendar))). Pick a time from freeTimes."
+        }
+        do {
+            try schedule.add(session, on: date, at: startDate)
+        } catch {
+            return "Couldn't add it: \(error.localizedDescription)"
+        }
+        let range = "\(SessionScheduler.time(startDate, calendar: calendar))–\(SessionScheduler.time(end, calendar: calendar))"
+        chat?.notice("Added to your calendar: \(session.session), \(label) \(range).")
+        return "Added \(session.session) on \(label) \(range) to the athlete's calendar."
     }
 }
 
@@ -478,5 +574,49 @@ nonisolated struct ChangePlanDayTool: Tool {
 
     @concurrent func call(arguments: PlannedDay) async throws -> String {
         await toolbox.changePlanDay(arguments)
+    }
+}
+
+@Generable
+nonisolated struct DayArguments {
+    @Guide(description: "Day label from getPlan, e.g. 'Tue 28 Oct', or an empty string for all coming days")
+    var day: String
+}
+
+nonisolated struct FreeTimesTool: Tool {
+    let toolbox: CoachToolbox
+    let name = "freeTimes"
+    let description = "Best times for the planned sessions from the athlete's calendar and the weather, and sessions already in the calendar."
+
+    @concurrent func call(arguments: DayArguments) async throws -> String {
+        await toolbox.freeTimes(day: arguments.day)
+    }
+}
+
+nonisolated struct WeatherTool: Tool {
+    let toolbox: CoachToolbox
+    let name = "weather"
+    let description = "Forecast every 3 hours from 06:00 to 21:00, with sunrise and sunset."
+
+    @concurrent func call(arguments: DayArguments) async throws -> String {
+        await toolbox.weather(day: arguments.day)
+    }
+}
+
+@Generable
+nonisolated struct ScheduleSessionArguments {
+    @Guide(description: "Day label from getPlan, e.g. 'Tue 28 Oct'")
+    var day: String
+    @Guide(description: "Start time, 24-hour HH:mm, e.g. 07:30")
+    var start: String
+}
+
+nonisolated struct ScheduleSessionTool: Tool {
+    let toolbox: CoachToolbox
+    let name = "scheduleSession"
+    let description = "Adds that day's planned session to the athlete's calendar at a start time (moves it if it's already there). Only when the athlete asks."
+
+    @concurrent func call(arguments: ScheduleSessionArguments) async throws -> String {
+        await toolbox.scheduleSession(day: arguments.day, start: arguments.start)
     }
 }

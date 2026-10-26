@@ -9,6 +9,9 @@ func runOfflineChecks() async {
     checkRaceForecast()
     await checkPlanRepair()
     checkLegacyHistory()
+    checkSessionScheduler()
+    checkForecastParsing()
+    await checkAthletePlan()
 }
 
 /// Analyses saved by earlier versions (with an `engine`, before `modelName`, `sport` and `targetZone`) still load.
@@ -74,7 +77,7 @@ func checkPlanAdherence() {
     section("Plan adherence")
     let scenario = Scenario.demoWithHistory()
     let adherence = PlanAdherence(
-        history: scenario.history, workouts: scenario.snapshot.workouts, zones: scenario.metrics.heartRateZones,
+        plan: TrainingPlan(analyses: scenario.history), workouts: scenario.snapshot.workouts, zones: scenario.metrics.heartRateZones,
         now: scenario.snapshot.fetchedAt, calendar: scenario.calendar
     )
     for day in adherence.days {
