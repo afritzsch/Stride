@@ -260,7 +260,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV and steps from Apple Health so the AI coach can analyze your training and plan your week.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV, steps and weight from Apple Health so the AI coach can analyze your training and plan your week.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -305,7 +305,7 @@
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV and steps from Apple Health so the AI coach can analyze your training and plan your week.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV, steps and weight from Apple Health so the AI coach can analyze your training and plan your week.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;

@@ -18,6 +18,8 @@ nonisolated struct RunPromptBuilder {
         Rules:
         - Work out the session's purpose from the plan, the athlete's note, or the structure of the splits and \
         heart rate, and judge it against that purpose.
+        - If a measured effort is given, it is computed from time in the athlete's zones: use it as the effort \
+        and never contradict it (don't call a hard session easy or lacking intensity).
         - Cite specific numbers: splits, pace, heart rate, time in zones, drift.
         - Use the athlete's heart-rate zones exactly as given (they match their watch); never assign zones from \
         % of max HR yourself.
@@ -26,6 +28,13 @@ nonisolated struct RunPromptBuilder {
         - Compare with the athlete's previous sessions of the same sport when relevant.
         - Be practical: what went well, what to change, how to recover, and what the next session should be.
         - If a metric is missing ("–"), don't guess. Address the athlete as "you". Be direct and concise.
+
+        Writing:
+        - Lists are bullet points: one short, plain point each, like a coach talking to the athlete. Never write \
+        "Label: value" fragments, semicolon-separated lists, or copy lines from the brief.
+        - The athlete already sees the stats, zones and data limitations in the app: interpret them, don't repeat them.
+        - Data limitations describe how the watch recorded the session. They only limit what you can conclude; \
+        never turn them into advice.
         """
 
     var prompt: String {
@@ -72,11 +81,17 @@ nonisolated struct RunPromptBuilder {
             let shares = zones.enumerated().map { "Z\($0.offset + 1) \(Int(($0.element / zoneTotal * 100).rounded()))%" }
             lines.append("- Time in HR zones: \(shares.joined(separator: ", "))")
         }
+        if let effort = EffortLevel.measured(zoneSeconds: zones, durationMinutes: workout.durationMinutes) {
+            let hard = Int(((zones[3] + zones[4]) / zoneTotal * 100).rounded())
+            lines.append("- Measured effort: \(effort.rawValue) (\(hard)% of the time in Z4–Z5)")
+        }
         if let decoupling = detail.decouplingPercent {
             lines.append("- Aerobic decoupling (pace:HR, 1st vs 2nd half): \(num(decoupling, 1))%")
         }
-        for note in detail.dataNotes {
-            lines.append("- Data note: \(note)")
+        if !detail.dataNotes.isEmpty {
+            lines.append("")
+            lines.append("DATA LIMITATIONS (how the watch recorded it, not advice material)")
+            lines.append(contentsOf: detail.dataNotes.map { "- \($0)" })
         }
 
         if !detail.splits.isEmpty {
@@ -115,7 +130,13 @@ nonisolated struct RunPromptBuilder {
         }
         let ind = metrics.indicators
         let today = snapshot.days.first { $0.date == day }
-        lines.append("- Resting HR that day: \(num(today?.restingHeartRate, 0)) bpm (28-day avg \(num(ind.restingHR28, 0))); HRV: \(num(today?.hrvMs, 0)) ms (28-day avg \(num(ind.hrv28, 0)))")
+        // Leave out what's missing: small models otherwise echo "–" back to the athlete.
+        if let resting = today?.restingHeartRate {
+            lines.append("- Resting HR that day: \(num(resting, 0)) bpm (28-day avg \(num(ind.restingHR28, 0)))")
+        }
+        if let hrv = today?.hrvMs {
+            lines.append("- HRV that day: \(num(hrv, 0)) ms (28-day avg \(num(ind.hrv28, 0)))")
+        }
         // Load leading up to this session (not counting it), so the context is right for older workouts too.
         func loadBefore(days: Int) -> Double {
             (1...days).compactMap { calendar.date(byAdding: .day, value: -$0, to: day) }

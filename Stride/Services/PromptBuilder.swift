@@ -25,6 +25,8 @@ nonisolated struct PromptBuilder {
         - If there is a goal event, periodize toward it using the weeks remaining (base, build, peak, then a taper \
         in the final 1–2 weeks).
         - Cover only the athlete's selected focus areas, but always produce the full 7-day plan.
+        - Body weight is context, not a target: mention it only when it matters for training (e.g. a fast drop \
+        alongside rising load can mean under-fueling). Don't give dieting advice.
         - You are not a doctor. If the data suggests a medical concern, recommend seeing a professional.
         - Address the athlete as "you". Be direct and concise.
         """
@@ -44,6 +46,9 @@ nonisolated struct PromptBuilder {
         lines.append("- Targets: \(Self.num(profile.sleepTargetHours, 1)) h sleep, \(profile.dailyStepTarget) steps/day")
         let focus = FocusArea.allCases.filter { profile.focusAreas.contains($0) }.map(\.title)
         lines.append("- Focus areas: \(focus.isEmpty ? "all" : focus.joined(separator: ", "))")
+        if let weight = ind.latestWeightKg, let date = ind.latestWeightDate {
+            lines.append("- Body weight: \(Self.num(weight, 1)) kg (weighed \(Self.dayLabel(date, calendar: calendar))); avg 7 d / 28 d: \(Self.num(ind.weight7, 1)) / \(Self.num(ind.weight28, 1)) kg")
+        }
         if profile.hasGoal {
             let weeks = max(0, calendar.dateComponents([.day], from: snapshot.fetchedAt, to: profile.goalDate).day ?? 0) / 7
             let target = profile.goalTarget.isEmpty ? "" : ", target: \(profile.goalTarget)"
@@ -68,10 +73,12 @@ nonisolated struct PromptBuilder {
         }
 
         lines.append("")
-        lines.append("WEEKLY (week starting | sessions | minutes | km | load | hard | sleep h | steps | RHR | HRV)")
+        // Most people don't weigh themselves; leave the column out rather than fill it with "–".
+        let hasWeight = ind.latestWeightKg != nil
+        lines.append("WEEKLY (week starting | sessions | minutes | km | load | hard | sleep h | steps | RHR | HRV\(hasWeight ? " | weight kg" : ""))")
         for week in metrics.weeks.suffix(compact ? 4 : 8) {
             let inProgress = (calendar.date(byAdding: .day, value: 7, to: week.weekStart) ?? week.weekStart) > snapshot.fetchedAt
-            lines.append([
+            var columns = [
                 Self.dayLabel(week.weekStart, calendar: calendar) + (inProgress ? " (in progress)" : ""),
                 "\(week.sessions)",
                 Self.num(week.trainingMinutes, 0),
@@ -82,7 +89,9 @@ nonisolated struct PromptBuilder {
                 Self.num(week.avgSteps, 0),
                 Self.num(week.avgRestingHR, 0),
                 Self.num(week.avgHRV, 0),
-            ].joined(separator: " | "))
+            ]
+            if hasWeight { columns.append(Self.num(week.avgWeightKg, 1)) }
+            lines.append(columns.joined(separator: " | "))
         }
 
         if !compact {

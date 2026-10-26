@@ -4,6 +4,8 @@ import Foundation
 nonisolated enum DemoData {
     static func snapshot(days: Int = HealthKitService.windowWeeks * 7, calendar: Calendar = .current) -> HealthSnapshot {
         var rng = SeededGenerator(seed: 42)
+        // Separate stream so adding weight didn't change the rest of the demo data.
+        var weightRng = SeededGenerator(seed: 7)
         let now = Date()
         let today = calendar.startOfDay(for: now)
 
@@ -22,7 +24,11 @@ nonisolated enum DemoData {
                 steps: offset == 0 ? 4200 : Double.random(in: 5500...13500, using: &rng),
                 activeEnergyKcal: Double.random(in: 350...900, using: &rng),
                 restingHeartRate: (ramp ? 55 : 51) + Double.random(in: -2...2, using: &rng),
-                hrvMs: (ramp ? 48 : 62) + Double.random(in: -6...6, using: &rng)
+                hrvMs: (ramp ? 48 : 62) + Double.random(in: -6...6, using: &rng),
+                // Weighs in most mornings, drifting down ~1 kg over the window.
+                bodyMassKg: Double.random(in: 0...1, using: &weightRng) < 0.6
+                    ? 72.5 - Double(days - 1 - offset) / Double(days) + Double.random(in: -0.4...0.4, using: &weightRng)
+                    : nil
             ))
 
             let bedtimeMinutes = (ramp ? 23 * 60 + 40 : 22 * 60 + 50) + Int.random(in: -40...50, using: &rng)

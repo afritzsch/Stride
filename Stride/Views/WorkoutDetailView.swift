@@ -407,7 +407,15 @@ private struct RunAnalysisContent: View {
                         .foregroundStyle(.secondary)
                 }
                 Text(analysis.headline).font(.title3.bold())
-                Text(analysis.summary).font(.subheadline)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(analysis.summary, id: \.self) { point in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("•").foregroundStyle(analysis.effort.color)
+                            Text(point)
+                        }
+                    }
+                }
+                .font(.subheadline)
                 if !analysis.planComparison.isEmpty {
                     Label(analysis.planComparison, systemImage: "calendar")
                         .font(.footnote)
