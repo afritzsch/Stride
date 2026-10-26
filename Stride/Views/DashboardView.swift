@@ -26,6 +26,7 @@ struct DashboardView: View {
                         if snapshot.isEmpty {
                             NoDataCard()
                         } else {
+                            TodayCard()
                             IndicatorGrid(metrics: metrics, profile: model.profile)
                             MetricLink(metric: .load) { WeeklyLoadChart(weeks: metrics.weeks, isLink: true) }
                             MetricLink(metric: .sleep) {
@@ -50,6 +51,10 @@ struct DashboardView: View {
                 }
             }
             .refreshable { await model.refresh() }
+            .task(id: model.snapshot?.fetchedAt) {
+                await model.adjustTodayIfNeeded(automatically: true)
+                await model.reviewNewWorkouts()
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button("Refresh", systemImage: "arrow.clockwise") {
@@ -93,6 +98,125 @@ private struct NoDataCard: View {
             Text("Apple Health has no workouts, sleep, or heart rate for the last \(HealthKitService.windowWeeks) weeks. Check that your watch's app is syncing to Apple Health, and that this app has read access under Settings → Health → Data Access & Devices.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Today's planned session next to this morning's recovery signals, with a lighter version when they're off.
+private struct TodayCard: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let readiness = model.readiness
+        Card {
+            HStack {
+                Text("Today").font(.headline)
+                Spacer()
+                if let readiness, readiness.level != .unknown {
+                    StatusBadge(text: readiness.level.title, color: readiness.level.color)
+                }
+            }
+            if let readiness, !readiness.signals.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(readiness.signals, id: \.self) { signal in
+                        Label(signal.text, systemImage: signal.isStrong ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
+                            .foregroundStyle(signal.isStrong ? .orange : .secondary)
+                    }
+                }
+                .font(.footnote)
+            }
+
+            if !model.todaysWorkouts.isEmpty {
+                Label("Done: " + model.todaysWorkouts.map { "\($0.sport) \(Int($0.durationMinutes.rounded())) min" }.joined(separator: ", "), systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.green)
+                ForEach(model.todaysWorkouts) { workout in
+                    if let review = model.runAnalyses[workout.id] {
+                        NavigationLink(value: DashboardDestination.workout(workout)) {
+                            Label(review.analysis.headline, systemImage: "sparkles").font(.footnote)
+                        }
+                    } else if model.analyzingWorkoutIDs.contains(workout.id) {
+                        Label("Reviewing your \(workout.sport.lowercased())…", systemImage: "sparkles")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if let planned = model.todaysPlan {
+                PlannedLine(day: planned, prefix: "Planned")
+                adjustment(for: planned, readiness: readiness)
+            } else {
+                Text("No session planned for today. Run an analysis on the AI Coach tab to get a plan.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func adjustment(for planned: PlannedDay, readiness: Readiness?) -> some View {
+        if let saved = model.todayAdjustment, Calendar.current.isDateInToday(saved.date) {
+            switch saved.state {
+            case .suggested:
+                VStack(alignment: .leading, spacing: 8) {
+                    Divider()
+                    PlannedLine(day: saved.adjustment.session, prefix: "Suggested")
+                    Text(saved.adjustment.reason).font(.footnote).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Use this") { model.resolveTodayAdjustment(accept: true) }
+                            .buttonStyle(.borderedProminent)
+                        Button("Keep plan") { model.resolveTodayAdjustment(accept: false) }
+                            .buttonStyle(.bordered)
+                    }
+                    .font(.subheadline)
+                }
+            case .accepted:
+                Label("Adjusted for how you recovered", systemImage: "wand.and.stars").font(.caption).foregroundStyle(.secondary)
+            case .declined:
+                EmptyView()
+            }
+        } else if model.isAdjustingToday {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("Adjusting today's session…").font(.footnote).foregroundStyle(.secondary)
+            }
+        } else if !planned.isRest, readiness?.suggestsAdjusting == true {
+            Button("Adjust for today", systemImage: "wand.and.stars") {
+                Task { await model.adjustTodayIfNeeded(automatically: false) }
+            }
+            .font(.subheadline)
+            .disabled(model.aiBlocker != nil)
+            if let error = model.adjustmentError {
+                Text(error).font(.footnote).foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+private struct PlannedLine: View {
+    var day: PlannedDay
+    var prefix: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Circle().fill(day.intensity.color).frame(width: 8, height: 8)
+            Text("\(Text("\(prefix):").foregroundStyle(.secondary)) \(Text(day.isRest ? "Rest" : day.session).bold())")
+            Spacer()
+            if day.durationMinutes > 0 {
+                Text("\(day.durationMinutes) min" + (day.targetZone > 0 ? " · Z\(day.targetZone)" : ""))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.subheadline)
+    }
+}
+
+extension Readiness.Level {
+    var color: Color {
+        switch self {
+        case .unknown: .gray
+        case .good: .green
+        case .caution: .yellow
+        case .low: .orange
         }
     }
 }

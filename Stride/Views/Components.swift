@@ -61,9 +61,9 @@ struct AnalyzeControls: View {
                 Label(buttonTitle, systemImage: "wand.and.stars").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(isDisabled || model.engineBlocker != nil)
+            .disabled(isDisabled || model.aiBlocker != nil)
         }
-        if let blocker = model.engineBlocker {
+        if let blocker = model.aiBlocker {
             Text(blocker).font(.footnote).foregroundStyle(.orange)
         }
         if let notice {

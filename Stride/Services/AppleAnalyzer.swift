@@ -2,12 +2,6 @@ import Foundation
 import FoundationModels
 
 nonisolated enum AnalyzerError: LocalizedError {
-    case missingAPIKey
-    case api(status: Int, message: String)
-    case refused
-    case truncated
-    /// Carries the decoding error and the start of the text for debugging; the user sees a generic message.
-    case malformedResponse(String)
     case onDeviceUnavailable(String)
     case notReady(String)
     case appleIntelligence(String)
@@ -15,114 +9,11 @@ nonisolated enum AnalyzerError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey: "Add your Anthropic API key in Settings."
-        case .api(let status, let message): "Claude API error \(status): \(message)"
-        case .refused: "Claude declined to analyze this request."
-        case .truncated: "The analysis was cut off. Please try again."
-        case .malformedResponse: "Couldn't read the analysis. Please try again."
         case .onDeviceUnavailable(let reason), .notReady(let reason), .appleIntelligence(let reason): reason
-        case .contextTooLarge: "Too much data for the on-device model. Try Claude instead."
+        case .contextTooLarge: "Too much data for the on-device model."
         }
     }
 }
-
-// MARK: - Claude
-
-/// Calls the Claude Messages API directly with the user's own API key and decodes the structured JSON output.
-nonisolated struct ClaudeAnalyzer {
-    var apiKey: String
-    var model = "claude-opus-5-5"
-    static let displayName = "Claude Opus 5.5"
-
-    private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-    /// Thinking (always on for this model) counts toward this, so leave room beyond the report itself.
-    private static let maxTokens = 32000
-    private static let maxAttempts = 3
-
-    func analyze<Output: StructuredOutput>(_: Output.Type, instructions: String, prompt: String) async throws -> Output {
-        guard !apiKey.isEmpty else { throw AnalyzerError.missingAPIKey }
-
-        var request = URLRequest(url: Self.endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 600
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
-        // Lets the API retry on a fallback model server-side if a safety classifier declines.
-        request.setValue("server-side-fallback-2026-07-01", forHTTPHeaderField: "anthropic-beta")
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": Self.maxTokens,
-            "fallbacks": "default",
-            "system": instructions,
-            "messages": [["role": "user", "content": prompt]],
-            "output_config": [
-                "effort": "high",
-                "format": ["type": "json_schema", "schema": Output.jsonSchema],
-            ],
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let data = try await send(request)
-        let message = try JSONDecoder().decode(MessageResponse.self, from: data)
-        switch message.stopReason {
-        case "refusal": throw AnalyzerError.refused
-        case "max_tokens": throw AnalyzerError.truncated
-        default: break
-        }
-        // After a server-side fallback, content holds the first model's partial output, a "fallback"
-        // block, then the fallback model's full output. Only the part after the last fallback counts.
-        let start = message.content.lastIndex { $0.type == "fallback" }.map { $0 + 1 } ?? 0
-        let text = message.content[start...].filter { $0.type == "text" }.compactMap(\.text).joined()
-        do {
-            return try JSONDecoder().decode(Output.self, from: Data(text.utf8))
-        } catch {
-            throw AnalyzerError.malformedResponse("\(error) in: \(text.prefix(300))")
-        }
-    }
-
-    /// Sends the request, retrying rate limits, overload and server errors with backoff.
-    private func send(_ request: URLRequest) async throws -> Data {
-        for attempt in 1...Self.maxAttempts {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let http = response as? HTTPURLResponse
-            let status = http?.statusCode ?? 0
-            if status == 200 { return data }
-
-            let retryable = [408, 409, 429].contains(status) || status >= 500
-            if retryable, attempt < Self.maxAttempts {
-                let retryAfter = http?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
-                try await Task.sleep(for: .seconds(min(retryAfter ?? Double(2 << attempt), 60)))
-                continue
-            }
-            let message = (try? JSONDecoder().decode(APIErrorEnvelope.self, from: data))?.error.message
-            throw AnalyzerError.api(status: status, message: message ?? HTTPURLResponse.localizedString(forStatusCode: status))
-        }
-        preconditionFailure("unreachable")
-    }
-
-    private struct MessageResponse: Decodable {
-        struct Block: Decodable {
-            var type: String
-            var text: String?
-        }
-        var content: [Block]
-        var stopReason: String?
-
-        enum CodingKeys: String, CodingKey {
-            case content
-            case stopReason = "stop_reason"
-        }
-    }
-
-    private struct APIErrorEnvelope: Decodable {
-        struct Detail: Decodable { var message: String }
-        var error: Detail
-    }
-}
-
-// MARK: - Apple Intelligence (Foundation Models)
 
 nonisolated enum AppleModelRoute: String, Codable, Sendable {
     case privateCloud, onDevice
@@ -213,11 +104,15 @@ nonisolated struct AppleAnalyzer {
         return "Ready"
     }
 
-    func analyze<Output: StructuredOutput>(
+    /// Called on the main actor with each partial result while the model writes, so the UI can show it as it streams.
+    typealias PartialHandler<Output: Generable> = @MainActor (Output.PartiallyGenerated) -> Void
+
+    func analyze<Output: Generable & Sendable>(
         _: Output.Type,
         instructions: String,
         fullPrompt: String,
-        compactPrompt: String
+        compactPrompt: String,
+        onPartial: PartialHandler<Output>? = nil
     ) async throws -> Result<Output> {
         var fallbackReason: String?
 
@@ -230,7 +125,8 @@ nonisolated struct AppleAnalyzer {
                     let report: Output = try await Self.respond(
                         model: PrivateCloudComputeLanguageModel(),
                         instructions: instructions,
-                        prompts: [fullPrompt, compactPrompt]
+                        prompts: [fullPrompt, compactPrompt],
+                        onPartial: onPartial
                     )
                     return Result(report: report, route: .privateCloud)
                 } catch let error as PrivateCloudComputeLanguageModel.Error {
@@ -251,25 +147,47 @@ nonisolated struct AppleAnalyzer {
         let prompts = await Self.fitsOnDevice(Output.self, instructions: instructions, prompt: fullPrompt)
             ? [fullPrompt, compactPrompt]
             : [compactPrompt]
-        let report: Output = try await Self.respond(model: SystemLanguageModel.default, instructions: instructions, prompts: prompts)
+        let report: Output = try await Self.respond(model: SystemLanguageModel.default, instructions: instructions, prompts: prompts, onPartial: onPartial)
         return Result(report: report, route: .onDevice, fallbackReason: fallbackReason)
     }
 
     /// Tries each prompt in order, moving to the next (smaller) one if the context window overflows.
-    private static func respond<Output: StructuredOutput>(model: some LanguageModel, instructions: String, prompts: [String]) async throws -> Output {
+    private static func respond<Output: Generable & Sendable>(
+        model: some LanguageModel,
+        instructions: String,
+        prompts: [String],
+        onPartial: PartialHandler<Output>?
+    ) async throws -> Output {
         for (index, prompt) in prompts.enumerated() {
             let session = LanguageModelSession(model: model, instructions: instructions)
             do {
-                return try await session.respond(to: prompt, generating: Output.self).content
+                // Stream so the UI can show the report as it's written; the on-device model is slow enough to notice.
+                var final: GeneratedContent?
+                for try await snapshot in session.streamResponse(to: prompt, generating: Output.self) {
+                    final = snapshot.rawContent
+                    if let onPartial { await onPartial(snapshot.content) }
+                }
+                guard let final else { throw AnalyzerError.appleIntelligence("Apple Intelligence returned nothing.") }
+                return try Output(final)
             } catch LanguageModelError.contextSizeExceeded {
                 if index == prompts.count - 1 { throw AnalyzerError.contextTooLarge }
             } catch let error as LanguageModelError {
                 // Let Private Cloud Compute rate limits through, so `analyze` falls back to on-device.
                 if case .rateLimited = error, model is PrivateCloudComputeLanguageModel { throw error }
                 throw AnalyzerError.appleIntelligence(Self.describe(error))
+            } catch let error as NSError where error.domain.hasPrefix("FoundationModels") {
+                // Some failures while streaming arrive bridged, not as `LanguageModelError` (e.g. the Simulator's
+                // missing guardrail backend).
+                throw AnalyzerError.appleIntelligence("Apple Intelligence couldn't complete this (\(error.localizedDescription)).")
             }
         }
         throw AnalyzerError.contextTooLarge
+    }
+
+    /// Loads the on-device model ahead of a likely request, so the first response starts sooner.
+    static func prewarm(instructions: String) {
+        guard onDeviceBlocker == nil else { return }
+        LanguageModelSession(instructions: instructions).prewarm()
     }
 
     private static func fitsOnDevice<Output: Generable>(_: Output.Type, instructions: String, prompt: String) async -> Bool {

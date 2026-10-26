@@ -17,11 +17,11 @@ extension HealthFixture {
 
 /// Hooks for driving the app from the Simulator (see tools/stride-mcp). Debug builds only read these
 /// launch arguments:
-///   -route dashboard | coach | plan | settings | workouts | workout:<latest | latest-run | index | uuid>
+///   -route dashboard | coach | chat | plan | settings | workouts | workout:<latest | latest-run | index | uuid>
 ///          | progress | skill:<endurance | power | strength | explorer | vitality | rest | discipline>
 ///          | metric:<load | acwr | sleep | restingHR | hrv | steps | weight>
 ///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis;
-///                         on the progress route: trend, compare, records, or achievements
+///                         on the progress route: trend, compare, records, or achievements; on the plan route: adherence
 ///   -analyze YES          review the first opened workout
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
@@ -60,6 +60,9 @@ extension AppModel {
             selectedTab = .progress
             if let skill = Skill(rawValue: parts.count > 1 ? parts[1] : "") { progressPath = [skill] }
         case "coach": selectedTab = .coach
+        case "chat":
+            selectedTab = .coach
+            showsCoachChat = true
         case "plan": selectedTab = .plan
         case "settings": selectedTab = .settings
         case "workouts":
@@ -131,14 +134,30 @@ extension AppModel {
             "generatedAt": iso.string(from: .now),
             "dataSource": fixture != nil ? "fixture" : (snapshot?.isDemo == true ? "demo" : "health"),
             "route": UserDefaults.standard.string(forKey: "route") ?? NSNull(),
-            "engine": engine.rawValue,
-            "engineBlocker": engineBlocker ?? NSNull(),
+            "aiBlocker": aiBlocker ?? NSNull(),
             "healthError": healthError ?? NSNull(),
             "analysisError": analysisError ?? NSNull(),
             "analysisNotice": analysisNotice ?? NSNull(),
             "latestWeeklyHeadline": latestAnalysis?.report.headline ?? NSNull(),
             "events": debugEvents,
         ]
+
+        if let readiness {
+            state["readiness"] = ["level": "\(readiness.level)", "signals": readiness.signals.map(\.text), "fine": readiness.fine]
+        }
+        if let adjustment = todayAdjustment {
+            state["todayAdjustment"] = [
+                "state": adjustment.state.rawValue,
+                "original": adjustment.original.briefDescription,
+                "suggested": adjustment.adjustment.session.briefDescription,
+                "reason": adjustment.adjustment.reason,
+            ]
+        }
+        if let adherence = planAdherence {
+            state["planAdherence"] = adherence.days.map { day in
+                ([PromptBuilder.dayLabel(day.date, calendar: .current) + ": " + day.status.rawValue] + day.notes).joined(separator: "; ")
+            }
+        }
 
         if let metrics {
             let ind = metrics.indicators
@@ -160,6 +179,15 @@ extension AppModel {
             }
         }
 
+        if UserDefaults.standard.string(forKey: "route") == "chat" {
+            // What the chat's tools return, so they can be checked without the model.
+            let toolbox = CoachToolbox(model: self, chat: nil)
+            state["coachTools"] = [
+                "recentDays": toolbox.recentDays(7),
+                "workouts": toolbox.workouts(days: 14, sport: "running"),
+                "plan": toolbox.plan(),
+            ]
+        }
         if let progress {
             state["progress"] = [
                 "firstDate": progress.firstDate.map { iso.string(from: $0) } ?? NSNull(),

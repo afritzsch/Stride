@@ -7,6 +7,10 @@ nonisolated struct PromptBuilder {
     var profile: UserProfile
     var planStart: Date
     var compact: Bool
+    /// Earlier analyses, newest first: their plans (to compare with what happened) and their verdicts.
+    var history: [SavedAnalysis] = []
+    /// Coach reviews by workout ID, with the athlete's notes.
+    var reviews: [UUID: SavedRunAnalysis] = [:]
     var calendar = Calendar.current
 
     static let instructions = """
@@ -25,6 +29,13 @@ nonisolated struct PromptBuilder {
         - If there is a goal event, periodize toward it using the weeks remaining (base, build, peak, then a taper \
         in the final 1–2 weeks).
         - Cover only the athlete's selected focus areas, but always produce the full 7-day plan.
+        - LAST PLAN VS ACTUAL shows how your previous plan went. Build on it: repeat a missed key session only \
+        if recovery allows, never cram missed work into the new week, and if sessions keep being missed or changed, \
+        make the plan fit the athlete's real routine.
+        - SESSION FEEDBACK holds the athlete's own words after sessions. Take pain, illness or unusual fatigue \
+        seriously and adjust the plan for it.
+        - COACH LOG lists your earlier verdicts. Stay consistent with them unless the data changed, and then say \
+        what changed.
         - Body weight is context, not a target: mention it only when it matters for training (e.g. a fast drop \
         alongside rising load can mean under-fueling). Don't give dieting advice.
         - You are not a doctor. If the data suggests a medical concern, recommend seeing a professional.
@@ -133,10 +144,83 @@ nonisolated struct PromptBuilder {
             ].joined(separator: " | "))
         }
 
+        lines.append(contentsOf: memorySections)
+
         lines.append("")
-        let planDays = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: planStart) }
-        lines.append("Write the 7-day plan for these days, in this order, using these exact labels: \(planDays.map { Self.dayLabel($0, calendar: calendar) }.joined(separator: ", ")).")
+        lines.append("Write the 7-day plan for these days, in this order, using these exact labels: \(Self.planLabels(start: planStart, calendar: calendar).joined(separator: ", ")).")
         return lines.joined(separator: "\n")
+    }
+
+    /// Plan vs actual, the athlete's session notes and earlier verdicts, so each analysis builds on the last.
+    private var memorySections: [String] {
+        var lines: [String] = []
+        let adherence = PlanAdherence(
+            history: history,
+            workouts: snapshot.workouts,
+            zones: metrics.heartRateZones,
+            now: snapshot.fetchedAt,
+            calendar: calendar
+        ).completed
+        if !adherence.isEmpty {
+            // The compact brief (small on-device context) keeps only the days that didn't go to plan.
+            let shown = compact ? adherence.filter { $0.status != .done && $0.status != .rested } : adherence
+            lines.append("")
+            lines.append("LAST PLAN VS ACTUAL (day | planned | recorded | result)\(compact ? ", days that differed" : "")")
+            for day in shown {
+                let recorded = day.workouts.isEmpty ? "–" : day.workouts.map { workout in
+                    "\(workout.sport) \(Self.num(workout.durationMinutes, 0)) min" + (workout.averageHeartRate.map { ", avg HR \(Self.num($0, 0))" } ?? "")
+                }.joined(separator: " + ")
+                let result = ([day.status.title.lowercased()] + day.notes).joined(separator: "; ")
+                lines.append("\(Self.dayLabel(day.date, calendar: calendar)) | \(day.planned.briefDescription) | \(recorded) | \(result)")
+            }
+            lines.append("Summary: \(PlanAdherence.summary(of: adherence))")
+        }
+
+        let since = calendar.date(byAdding: .day, value: compact ? -7 : -14, to: snapshot.fetchedAt) ?? snapshot.fetchedAt
+        let feedback = snapshot.workouts.reversed()
+            .filter { $0.start >= since }
+            .compactMap { workout in reviews[workout.id].map { (workout, $0) } }
+            .prefix(compact ? 2 : 6)
+        if !feedback.isEmpty {
+            lines.append("")
+            lines.append("SESSION FEEDBACK, NEWEST FIRST (day | sport | effort | your verdict | athlete's note)")
+            for (workout, review) in feedback {
+                lines.append([
+                    Self.dayLabel(workout.start, calendar: calendar),
+                    workout.sport,
+                    review.analysis.effort.rawValue,
+                    review.analysis.headline,
+                    Self.quote(review.note),
+                ].joined(separator: " | "))
+            }
+        }
+
+        // One verdict per week (the newest), so re-running an analysis doesn't crowd out older weeks.
+        var seenWeeks = Set<Date>()
+        let log = history.filter { analysis in
+            let week = calendar.dateInterval(of: .weekOfYear, for: analysis.createdAt)?.start ?? analysis.createdAt
+            return seenWeeks.insert(week).inserted
+        }.prefix(compact ? 2 : 6)
+        if !log.isEmpty {
+            lines.append("")
+            lines.append("COACH LOG, NEWEST FIRST (date | training status | your headline)")
+            for analysis in log {
+                lines.append("\(Self.dayLabel(analysis.createdAt, calendar: calendar)) | \(analysis.report.trainingStatus.rawValue) | \(analysis.report.headline)")
+            }
+        }
+        return lines
+    }
+
+    /// Labels of the seven plan days from `start`.
+    static func planLabels(start: Date, calendar: Calendar) -> [String] {
+        (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }.map { dayLabel($0, calendar: calendar) }
+    }
+
+    /// One line, at most 160 characters, or "–" when empty.
+    static func quote(_ text: String) -> String {
+        let line = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        guard !line.isEmpty else { return "–" }
+        return line.count > 160 ? String(line.prefix(159)) + "…" : line
     }
 
     /// "Mon 27 Oct": no commas, so labels can be listed unambiguously.

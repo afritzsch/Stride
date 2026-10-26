@@ -1,8 +1,7 @@
 import Foundation
 import FoundationModels
 
-// The report is both @Generable (guided generation with the on-device model) and Codable
-// (decoded from Claude's structured JSON output), so both engines produce the same type.
+// The report is @Generable (guided generation with Apple's on-device model) and Codable (saved history).
 
 @Generable
 nonisolated enum TrainingStatus: String, Codable, CaseIterable, Sendable {
@@ -74,13 +73,44 @@ nonisolated struct Recommendation: Codable, Hashable, Sendable {
 nonisolated struct PlannedDay: Codable, Hashable, Sendable {
     @Guide(description: "Day label exactly as given in the prompt, e.g. 'Mon 27 Oct'")
     var day: String
+    @Guide(description: "The sport, or Rest on a rest day", .anyOf(PlannedDay.sports))
+    var sport: String
     var intensity: SessionIntensity
     @Guide(description: "Session title, e.g. 'Easy run' or 'Rest'")
     var session: String
     @Guide(description: "Planned duration in minutes, 0 for rest days")
     var durationMinutes: Int
+    @Guide(description: "Heart-rate zone (1-5) for the main part of the session, 0 for rest or sessions without a heart-rate target", .range(0...5))
+    var targetZone: Int
     @Guide(description: "Specific details: structure, target heart rate or pace, sleep or recovery cue")
     var details: String
+
+    /// Names match `WorkoutSummary.sport` (HealthKit activity names), so plan and workouts can be compared.
+    static let rest = "Rest"
+    static let sports = [
+        "Running", "Cycling", "Swimming", "Walking", "Hiking", "Strength", "Mobility", "Yoga", "Rowing", "HIIT",
+        "Cross training", "Other", rest,
+    ]
+
+    var isRest: Bool { intensity == .rest }
+}
+
+nonisolated extension PlannedDay {
+    private enum CodingKeys: String, CodingKey {
+        case day, sport, intensity, session, durationMinutes, targetZone, details
+    }
+
+    /// Plans saved before `sport` and `targetZone` existed decode with an unknown sport ("") and no zone.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        day = try container.decode(String.self, forKey: .day)
+        intensity = try container.decode(SessionIntensity.self, forKey: .intensity)
+        sport = try container.decodeIfPresent(String.self, forKey: .sport) ?? (intensity == .rest ? Self.rest : "")
+        session = try container.decode(String.self, forKey: .session)
+        durationMinutes = try container.decode(Int.self, forKey: .durationMinutes)
+        targetZone = try container.decodeIfPresent(Int.self, forKey: .targetZone) ?? 0
+        details = try container.decode(String.self, forKey: .details)
+    }
 }
 
 @Generable
@@ -100,86 +130,30 @@ nonisolated struct AnalysisReport: Codable, Hashable, Sendable {
     var weekPlan: [PlannedDay]
 }
 
-/// A result type both engines can produce: Claude via `output_config.format`, Apple via guided generation.
-nonisolated protocol StructuredOutput: Generable, Decodable, Sendable {
-    /// JSON Schema mirroring the Codable shape, for Claude's structured output.
-    static var jsonSchema: [String: Any] { get }
-}
-
-nonisolated enum JSONSchema {
-    static var string: [String: Any] { ["type": "string"] }
-    static var integer: [String: Any] { ["type": "integer"] }
-
-    static func object(_ properties: [String: Any]) -> [String: Any] {
-        ["type": "object",
-         "properties": properties,
-         "required": Array(properties.keys).sorted(),
-         "additionalProperties": false]
-    }
-
-    static func array(_ items: [String: Any]) -> [String: Any] {
-        ["type": "array", "items": items]
-    }
-
-    static func enumeration<E: RawRepresentable & CaseIterable>(_: E.Type) -> [String: Any] where E.RawValue == String {
-        ["type": "string", "enum": E.allCases.map(\.rawValue)]
-    }
-}
-
-extension AnalysisReport: StructuredOutput {
-    nonisolated static var jsonSchema: [String: Any] {
-        typealias S = JSONSchema
-        return S.object([
-            "headline": S.string,
-            "trainingStatus": S.enumeration(TrainingStatus.self),
-            "assessment": S.string,
-            "insights": S.array(S.object([
-                "area": S.enumeration(InsightArea.self),
-                "tone": S.enumeration(InsightTone.self),
-                "title": S.string,
-                "detail": S.string,
-            ])),
-            "recommendations": S.array(S.object([
-                "area": S.enumeration(InsightArea.self),
-                "priority": S.enumeration(Priority.self),
-                "action": S.string,
-                "rationale": S.string,
-            ])),
-            "goalOutlook": S.string,
-            "weekPlan": S.array(S.object([
-                "day": S.string,
-                "intensity": S.enumeration(SessionIntensity.self),
-                "session": S.string,
-                "durationMinutes": S.integer,
-                "details": S.string,
-            ])),
-        ])
-    }
-}
-
-nonisolated enum AIEngine: String, Codable, CaseIterable, Identifiable, Sendable {
-    case claude
-    // Raw value kept from when this engine was on-device only, so saved settings still decode.
-    case apple = "onDevice"
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .claude: "Claude"
-        case .apple: "Apple Intelligence"
-        }
-    }
-}
-
 nonisolated struct SavedAnalysis: Codable, Hashable, Identifiable, Sendable {
     var id = UUID()
     var createdAt: Date
-    var engine: AIEngine
-    /// The model that actually ran, e.g. "Apple Private Cloud Compute". nil for analyses saved before this existed.
-    var modelName: String?
+    /// The model that ran, e.g. "Apple on-device model".
+    var modelName: String
     var planStartDate: Date
     var report: AnalysisReport
+}
 
-    var sourceTitle: String { modelName ?? engine.title }
+nonisolated extension SavedAnalysis {
+    private enum LegacyKeys: String, CodingKey { case engine }
+
+    /// Analyses saved before `modelName` existed only stored the engine ("claude" or "onDevice").
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        planStartDate = try container.decode(Date.self, forKey: .planStartDate)
+        report = try container.decode(AnalysisReport.self, forKey: .report)
+        if let name = try container.decodeIfPresent(String.self, forKey: .modelName) {
+            modelName = name
+        } else {
+            let engine = try? decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(String.self, forKey: .engine)
+            modelName = engine == "claude" ? "Claude" : "Apple Intelligence"
+        }
+    }
 }

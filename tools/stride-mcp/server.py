@@ -100,7 +100,6 @@ def launch(
     fixture: str | None = None,
     scroll_to: str | None = None,
     analyze: bool = False,
-    engine: str | None = None,
     reinstall: bool = False,
     wait: float = 7.0,
 ) -> dict:
@@ -112,7 +111,6 @@ def launch(
     fixture: path on this Mac to a HealthFixture JSON to replay instead of HealthKit; omit to clear.
     scroll_to: on the first workout opened, scroll to route | heart-rate | zones | splits | review | analysis.
     analyze: review the first workout opened (only workout routes support this).
-    engine: claude | onDevice (Apple Intelligence).
     """
     if not APP.exists():
         raise RuntimeError("App not built yet; run build first.")
@@ -140,8 +138,6 @@ def launch(
         args += ["-scrollTo", scroll_to]
     if analyze:
         args += ["-analyze", "YES"]
-    if engine:
-        args += ["-engine", engine]
     out = simctl("launch", udid, BUNDLE_ID, *args).stdout.strip()
     pid = int(out.split(":")[-1].strip()) if ":" in out else None
 
@@ -261,12 +257,12 @@ def serve() -> None:
     @mcp.tool(name="launch")
     def launch_tool(
         route: str = "dashboard", demo: bool | None = None, fixture: str | None = None,
-        scroll_to: str | None = None, analyze: bool = False, engine: str | None = None, reinstall: bool = False,
+        scroll_to: str | None = None, analyze: bool = False, reinstall: bool = False,
     ) -> dict:
-        """Install and relaunch Stride on a screen. route: dashboard | progress | coach | plan | settings | workouts |
+        """Install and relaunch Stride on a screen. route: dashboard | progress | coach | chat | plan | settings | workouts |
         workout:<latest|latest-run|index|uuid> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>. fixture: Mac path of a HealthFixture JSON to replay.
-        scroll_to: route | heart-rate | zones | splits | review | analysis. engine: claude | onDevice."""
-        return launch(route, demo, fixture, scroll_to, analyze, engine, reinstall)
+        scroll_to: route | heart-rate | zones | splits | review | analysis."""
+        return launch(route, demo, fixture, scroll_to, analyze, reinstall)
 
     @mcp.tool(name="screenshot")
     def screenshot_tool() -> Image:
@@ -307,7 +303,6 @@ def cli(argv: list[str]) -> None:
     p.add_argument("--fixture")
     p.add_argument("--scroll-to")
     p.add_argument("--analyze", action="store_true")
-    p.add_argument("--engine")
     p.add_argument("--reinstall", action="store_true")
     p = sub.add_parser("screenshot")
     p.add_argument("path", nargs="?")
@@ -329,7 +324,7 @@ def cli(argv: list[str]) -> None:
     match args.command:
         case "build": print(build())
         case "launch":
-            print(json.dumps(launch(args.route, args.demo, args.fixture, args.scroll_to, args.analyze, args.engine, args.reinstall), indent=2))
+            print(json.dumps(launch(args.route, args.demo, args.fixture, args.scroll_to, args.analyze, args.reinstall), indent=2))
         case "screenshot": print(screenshot(args.path))
         case "state": print(json.dumps(state(args.section), indent=2))
         case "logs": print(logs(args.seconds))

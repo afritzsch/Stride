@@ -112,7 +112,7 @@ nonisolated struct RunPromptBuilder {
 
         if let plannedSession {
             lines.append("")
-            lines.append("PLANNED FOR THIS DAY: \(plannedSession.session) (\(plannedSession.intensity.rawValue), \(plannedSession.durationMinutes) min). \(plannedSession.details)")
+            lines.append("PLANNED FOR THIS DAY: \(plannedSession.briefDescription). \(plannedSession.details)")
         }
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedNote.isEmpty {
