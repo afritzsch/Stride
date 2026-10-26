@@ -6,6 +6,7 @@ func runOfflineChecks() async {
     checkWeeklyPrompt()
     checkPlanCheck()
     checkReadiness()
+    checkRaceForecast()
     await checkPlanRepair()
     checkLegacyHistory()
     checkSessionScheduler()
@@ -212,4 +213,26 @@ func checkReadiness() {
     let prompt = DayAdjustment.prompt(planned: planned, readiness: readiness, metrics: scenario.metrics, profile: scenario.profile)
     print("  adjustment prompt: \(prompt.count) characters")
     check(prompt.contains("Strong signal"), "prompt lists the signals")
+}
+
+/// A slow recent half marathon with easy runs around it: the forecast stays close to the real result.
+func checkRaceForecast() {
+    section("Race forecast")
+    let calendar = Calendar.current
+    let now = Date.now
+    func run(_ daysAgo: Int, km: Double, minutes: Double) -> WorkoutSummary {
+        WorkoutSummary(id: UUID(), start: calendar.date(byAdding: .day, value: -daysAgo, to: now)!, durationMinutes: minutes, sport: "Running",
+                       distanceKm: km, activeEnergyKcal: nil, averageHeartRate: 150, maxHeartRate: nil, sourceName: "Watch")
+    }
+    let workouts = [run(20, km: 8, minutes: 58), run(10, km: 6, minutes: 42), run(6, km: 10, minutes: 70), run(2, km: 21.2, minutes: 139)]
+    let april = calendar.date(byAdding: .day, value: 170, to: now)!
+    guard let forecast = RaceForecast.make(distanceKm: 21.0975, raceDate: april, workouts: workouts, experience: .beginner, now: now) else {
+        return check(false, "a forecast from recent runs")
+    }
+    check(forecast.sameDistance?.distanceKm == 21.2, "finds the recent half marathon")
+    check((2.1 * 3600...2.35 * 3600).contains(forecast.currentSeconds), "current fitness near 2:19 (\(WorkoutFormat.duration(forecast.currentSeconds)))")
+    check(forecast.fastSeconds >= forecast.currentSeconds * 0.92 && forecast.fastSeconds < forecast.slowSeconds, "projection gains at most 8% (\(WorkoutFormat.duration(forecast.fastSeconds)))")
+    check(forecast.brief.contains("Half marathon") && forecast.brief.contains("Quote these times"), "brief names the race and tells the model to quote it")
+    check(RaceForecast.make(distanceKm: 5, raceDate: now, workouts: [run(80, km: 10, minutes: 60)], experience: .advanced, now: now) == nil, "no forecast from runs older than 8 weeks")
+    print(forecast.brief)
 }

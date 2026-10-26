@@ -31,7 +31,8 @@ final class CoachChat {
     func send(_ text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding, let model else { return }
-        if let blocker = AppleAnalyzer.onDeviceBlocker {
+        model.refreshModelAvailability()
+        if let blocker = model.onDeviceBlocker {
             error = blocker
             return
         }
@@ -77,7 +78,7 @@ final class CoachChat {
 
     /// Loads the model while the athlete is typing.
     func prewarm() {
-        guard let model, AppleAnalyzer.onDeviceBlocker == nil, session == nil else { return }
+        guard let model, model.onDeviceBlocker == nil, session == nil else { return }
         let session = makeSession(model: model)
         session.prewarm()
         self.session = session
@@ -94,6 +95,8 @@ final class CoachChat {
                 RecentDaysTool(toolbox: toolbox),
                 WorkoutsTool(toolbox: toolbox),
                 WorkoutDetailTool(toolbox: toolbox),
+                TrendsTool(toolbox: toolbox),
+                RaceForecastTool(toolbox: toolbox),
                 PlanTool(toolbox: toolbox),
                 ChangePlanDayTool(toolbox: toolbox),
                 FreeTimesTool(toolbox: toolbox),
@@ -110,11 +113,15 @@ final class CoachChat {
             """
             You are an experienced endurance coach chatting with your athlete in a phone app. Their watch data is \
             available through your tools: use them before answering questions about their training, recovery or \
-            plan, and cite the numbers you find. Never invent data; if a tool has nothing, say so. Change the plan \
-            only when the athlete asks for it, keep changes consistent with their availability, and tell them what \
-            you changed. For when to train, use freeTimes (calendar and weather); add a session to the calendar \
-            only when the athlete asks. You are not a doctor: for pain or illness, recommend seeing a professional. Answer in a few \
-            short sentences, addressing the athlete as "you".
+            plan, and cite the numbers you find. Never invent data; if a tool has nothing, say so. When asked for a \
+            prognosis, prediction or what to expect (fitness, race time, reaching the goal), always give your best \
+            estimate: call trends first, then answer with a concrete range, the numbers it rests on and how sure you \
+            are. For race times, call raceForecast and quote its times exactly; never calculate a time yourself. \
+            Projecting from their data is coaching, not inventing data, and a training prognosis is not medical \
+            advice. Change the plan only when the athlete asks for it, keep changes consistent with their \
+            availability, and tell them what you changed. For when to train, use freeTimes (calendar and weather); add a \
+            session to the calendar only when the athlete asks. Only for pain, injury or illness, recommend seeing a \
+            professional. Answer in a few short sentences, addressing the athlete as "you".
             """,
             "",
             "TODAY: \(PromptBuilder.dayLabel(.now, calendar: calendar))",
@@ -236,6 +243,92 @@ final class CoachToolbox {
         } catch {
             return "Couldn't load that workout: \(error.localizedDescription)"
         }
+    }
+
+    /// Weekly and monthly rollups, run pace and heart rate per week, records and the goal: what a forecast needs.
+    func trends() -> String {
+        chat?.setActivity("Looking at your trends…")
+        guard let model, let snapshot = model.snapshot, let metrics = model.metrics else { return "No health data is loaded." }
+        let calendar = Calendar.current
+        let num = PromptBuilder.num
+        var lines = ["WEEKLY (week starting | sessions | minutes | km | load | run km | run pace /km | run avg HR | RHR | HRV)"]
+        for week in metrics.weeks.suffix(8) {
+            let end = calendar.date(byAdding: .day, value: 7, to: week.weekStart) ?? week.weekStart
+            let runs = snapshot.workouts.filter { $0.sport == "Running" && $0.start >= week.weekStart && $0.start < end }
+            let measured = runs.filter { ($0.distanceKm ?? 0) > 0 }
+            let runKm = measured.compactMap(\.distanceKm).reduce(0, +)
+            let pace = runKm > 0 ? measured.map(\.durationMinutes).reduce(0, +) * 60 / runKm : nil
+            let withHR = runs.compactMap { run in run.averageHeartRate.map { (hr: $0, minutes: run.durationMinutes) } }
+            let hrMinutes = withHR.map(\.minutes).reduce(0, +)
+            let runHR = hrMinutes > 0 ? withHR.map { $0.hr * $0.minutes }.reduce(0, +) / hrMinutes : nil
+            lines.append([
+                PromptBuilder.dayLabel(week.weekStart, calendar: calendar) + (end > snapshot.fetchedAt ? " (in progress)" : ""),
+                "\(week.sessions)",
+                num(week.trainingMinutes, 0),
+                num(week.distanceKm, 1),
+                num(week.load, 0),
+                num(runKm, 1),
+                pace.map { WorkoutFormat.pace($0) } ?? "–",
+                num(runHR, 0),
+                num(week.avgRestingHR, 0),
+                num(week.avgHRV, 0),
+            ].joined(separator: " | "))
+        }
+        let ind = metrics.indicators
+        lines.append("Fitness (28-day load per week) \(num(ind.chronicLoad, 0)), last 7 days \(num(ind.acuteLoad, 0)), ACWR \(num(ind.acwr, 2)).")
+
+        if let progress = model.progress {
+            let months = progress.buckets(.trainingTime, granularity: .month, count: 6)
+            if months.count > 1 {
+                lines.append("MONTHLY (month | hours | km | run km | load | RHR | HRV)")
+                for month in months {
+                    let end = calendar.date(byAdding: .month, value: 1, to: month.start) ?? month.start
+                    func value(_ metric: ProgressMetric) -> String {
+                        num(progress.value(metric, from: month.start, to: end), metric.digits)
+                    }
+                    lines.append([
+                        month.start.formatted(.dateTime.month(.abbreviated).year()),
+                        num(month.value, 1), value(.distance), value(.runDistance), value(.load), value(.restingHR), value(.hrv),
+                    ].joined(separator: " | "))
+                }
+            }
+            if !progress.records.isEmpty {
+                lines.append("RECORDS: " + progress.records.map { "\($0.title) \($0.value) (\(PromptBuilder.dayLabel($0.date, calendar: calendar)))" }.joined(separator: "; "))
+            }
+        }
+
+        let profile = model.profile
+        if profile.hasGoal {
+            let weeks = max(0, calendar.dateComponents([.day], from: .now, to: profile.goalDate).day ?? 0) / 7
+            lines.append("GOAL: \(profile.goalName.isEmpty ? "event" : profile.goalName), \(weeks) weeks away\(profile.goalTarget.isEmpty ? "" : ", target \(profile.goalTarget)")")
+        } else {
+            lines.append("GOAL: none set.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// `month` 1–12 is that month's next occurrence (the goal date if it falls in it); 0 is the goal date, or today.
+    func raceForecast(distance: String, month: Int) -> String {
+        chat?.setActivity("Estimating your race time…")
+        guard let model, let snapshot = model.snapshot else { return "No health data is loaded." }
+        guard let km = RaceForecast.distances.first(where: { $0.name.localizedCaseInsensitiveCompare(distance) == .orderedSame })?.km else {
+            return "Unknown distance \(distance). Use one of: \(RaceForecast.distances.map(\.name).joined(separator: ", "))."
+        }
+        let calendar = Calendar.current
+        let profile = model.profile
+        let goal = profile.hasGoal && profile.goalDate > .now ? profile.goalDate : nil
+        var date = goal ?? .now
+        if (1...12).contains(month) {
+            if let goal, calendar.component(.month, from: goal) == month {
+                date = goal
+            } else {
+                date = calendar.nextDate(after: .now, matching: DateComponents(month: month, day: 15), matchingPolicy: .nextTime) ?? .now
+            }
+        }
+        guard let forecast = RaceForecast.make(distanceKm: km, raceDate: date, workouts: snapshot.workouts, experience: profile.experience) else {
+            return "No runs of 3 km or more with distance in the last 8 weeks, so there's nothing to base a race time on. Tell the athlete that."
+        }
+        return forecast.brief
     }
 
     func plan() -> String {
@@ -427,6 +520,37 @@ nonisolated struct WorkoutDetailTool: Tool {
 
     @concurrent func call(arguments: WorkoutDetailArguments) async throws -> String {
         await toolbox.workoutDetail(number: arguments.number)
+    }
+}
+
+@Generable
+nonisolated struct TrendsArguments {}
+
+nonisolated struct TrendsTool: Tool {
+    let toolbox: CoachToolbox
+    let name = "trends"
+    let description = "Long-term trends for forecasts and progress questions: 8 weeks of volume, load, run pace and run heart rate, 6 months of totals, fitness, personal records and the goal."
+
+    @concurrent func call(arguments: TrendsArguments) async throws -> String {
+        await toolbox.trends()
+    }
+}
+
+@Generable
+nonisolated struct RaceForecastArguments {
+    @Guide(description: "The race distance", .anyOf(RaceForecast.distances.map(\.name)))
+    var distance: String
+    @Guide(description: "Month of the race, 1 = January … 12 = December; 0 for the athlete's goal date or today", .range(0...12))
+    var month: Int
+}
+
+nonisolated struct RaceForecastTool: Tool {
+    let toolbox: CoachToolbox
+    let name = "raceForecast"
+    let description = "Estimated finish time for a 5K, 10K, half marathon or marathon now or in a given month, computed from recent runs. Use it for every race-time question."
+
+    @concurrent func call(arguments: RaceForecastArguments) async throws -> String {
+        await toolbox.raceForecast(distance: arguments.distance, month: arguments.month)
     }
 }
 

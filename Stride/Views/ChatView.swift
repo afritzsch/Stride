@@ -55,7 +55,7 @@ struct ChatView: View {
             Text("Ask about your training, recovery or plan. The coach looks up your data on this iPhone and can change your plan when you ask.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            if let blocker = AppleAnalyzer.onDeviceBlocker {
+            if let blocker = model.onDeviceBlocker {
                 Label(blocker, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(.orange)
             }
             FlowSuggestions(suggestions: Self.suggestions) { send($0) }

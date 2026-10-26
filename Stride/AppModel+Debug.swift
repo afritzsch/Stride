@@ -1,4 +1,5 @@
 import Foundation
+import FoundationModels
 
 extension HealthFixture {
     nonisolated static func encoder() -> JSONEncoder {
@@ -26,6 +27,7 @@ extension HealthFixture {
 ///   -analyze YES          review the first opened workout
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
+///   -probeModel YES       ask the on-device model for one word whatever `availability` says; writes Documents/model-probe.json
 extension AppModel {
     static func loadFixture() -> HealthFixture? {
         let path = UserDefaults.standard.string(forKey: "fixture") ?? URL.documentsDirectory.appending(path: "fixture.json").path()
@@ -210,6 +212,8 @@ extension AppModel {
             state["coachTools"] = [
                 "recentDays": toolbox.recentDays(7),
                 "workouts": toolbox.workouts(days: 14, sport: "running"),
+                "trends": toolbox.trends(),
+                "raceForecast": toolbox.raceForecast(distance: "Half marathon", month: 4),
                 "plan": toolbox.plan(),
                 "freeTimes": toolbox.freeTimes(day: ""),
                 "weather": toolbox.weather(day: PromptBuilder.dayLabel(.now, calendar: .current)),
@@ -268,3 +272,31 @@ extension AppModel {
         #endif
     }
 }
+
+#if DEBUG
+extension AppModel {
+    func probeModelIfAsked() async {
+        guard UserDefaults.standard.bool(forKey: "probeModel") else { return }
+        let model = SystemLanguageModel.default
+        var probe: [String: Any] = [
+            "date": ISO8601DateFormatter().string(from: .now),
+            "availability": String(describing: model.availability),
+            "supportsCurrentLocale": model.supportsLocale(),
+            "locale": Locale.current.identifier,
+        ]
+        let url = URL.documentsDirectory.appending(path: "model-probe.json")
+        func save() {
+            let data = try? JSONSerialization.data(withJSONObject: probe, options: [.prettyPrinted, .sortedKeys])
+            try? data?.write(to: url)
+        }
+        save()  // before generating, in case it never returns
+        do {
+            probe["response"] = try await LanguageModelSession().respond(to: "Reply with the single word OK.").content
+        } catch {
+            probe["error"] = String(describing: error)
+        }
+        probe["availabilityAfter"] = String(describing: model.availability)
+        save()
+    }
+}
+#endif

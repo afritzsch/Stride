@@ -13,7 +13,10 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("On-device model", value: AppleAnalyzer.onDeviceBlocker ?? "Ready")
+                    LabeledContent("On-device model", value: model.onDeviceBlocker == nil ? "Ready" : "Not ready")
+                    if let blocker = model.onDeviceBlocker {
+                        Text(blocker).font(.footnote).foregroundStyle(.secondary)
+                    }
                     if AppleAnalyzer.isPrivateCloudInBuild {
                         Toggle("Use Private Cloud Compute", isOn: $model.allowPrivateCloud)
                         if model.allowPrivateCloud {

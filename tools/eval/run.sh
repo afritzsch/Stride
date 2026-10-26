@@ -12,7 +12,7 @@ mkdir -p "$out"
 xcrun swiftc -target arm64-apple-macos27.0 -default-isolation MainActor -O \
     Stride/Models/*.swift \
     Stride/Services/TrainingMetrics.swift Stride/Services/PromptBuilder.swift Stride/Services/RunPromptBuilder.swift \
-    Stride/Services/DemoData.swift Stride/Services/HealthKitService.swift Stride/Services/PlanAdherence.swift Stride/Services/PlanCheck.swift Stride/Services/Readiness.swift Stride/Services/AppleAnalyzer.swift \
+    Stride/Services/DemoData.swift Stride/Services/HealthKitService.swift Stride/Services/PlanAdherence.swift Stride/Services/PlanCheck.swift Stride/Services/Readiness.swift Stride/Services/RaceForecast.swift Stride/Services/AppleAnalyzer.swift \
     Stride/Services/SessionScheduler.swift Stride/Services/OpenMeteo.swift Stride/Services/DemoSchedule.swift \
     tools/eval/*.swift \
     -o "$out/eval"

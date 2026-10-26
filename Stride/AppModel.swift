@@ -98,9 +98,19 @@ final class AppModel {
     var restingHRBaseline: Double { metrics?.indicators.restingHRBaseline ?? 60 }
     var heartRateZones: HeartRateZones { metrics?.heartRateZones ?? profile.heartRateZones(restingHR: restingHRBaseline) }
 
+    /// Why the on-device model can't run, or nil. `SystemLanguageModel.availability` isn't observable, so views
+    /// read this copy, which `refreshModelAvailability()` updates.
+    private(set) var onDeviceBlocker = AppleAnalyzer.onDeviceBlocker
+
     /// nil when Apple Intelligence can run, otherwise why not.
     var aiBlocker: String? {
-        AppleAnalyzer.unavailableReason(allowPrivateCloud: usesPrivateCloud)
+        if usesPrivateCloud, AppleAnalyzer.privateCloudBlocker == nil { return nil }
+        return onDeviceBlocker
+    }
+
+    func refreshModelAvailability() {
+        let blocker = AppleAnalyzer.onDeviceBlocker
+        if blocker != onDeviceBlocker { onDeviceBlocker = blocker }
     }
 
     init() {
@@ -340,6 +350,7 @@ final class AppModel {
     /// Reviews workouts from the last two days that have no review yet, one at a time. Each is tried once, so a
     /// failure (or a workout the model can't handle) doesn't repeat on every refresh.
     func reviewNewWorkouts() async {
+        refreshModelAvailability()
         guard autoReviewWorkouts, aiBlocker == nil, let snapshot else { return }
         let since = Date.now.addingTimeInterval(-2 * 24 * 3600)
         // Oldest first, so trimming keeps the most recent IDs.
@@ -369,6 +380,7 @@ final class AppModel {
     /// Reviews one workout and stores the result. Returns a notice if Apple Intelligence fell back to on-device.
     func analyzeWorkout(_ detail: WorkoutDetail, note: String) async throws -> String? {
         guard let snapshot, let metrics else { throw AnalyzerError.notReady("Health data isn't loaded yet.") }
+        refreshModelAvailability()
         if let blocker = aiBlocker { throw AnalyzerError.notReady(blocker) }
         let id = detail.summary.id
         guard analyzingWorkoutIDs.insert(id).inserted else { return nil }
@@ -428,6 +440,7 @@ final class AppModel {
     /// Suggests a lighter session when readiness is down and a session is still to do. It runs by itself once a day
     /// (it's free and on-device); the plan only changes when the athlete accepts.
     func adjustTodayIfNeeded(automatically: Bool) async {
+        refreshModelAvailability()
         guard aiBlocker == nil, !isAdjustingToday, todayAdjustment == nil || !automatically,
               let snapshot, let metrics, snapshot.isEmpty == false,
               let planned = todaysPlan, !planned.isRest, todaysWorkouts.isEmpty else { return }
