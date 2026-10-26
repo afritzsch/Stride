@@ -46,7 +46,7 @@ nonisolated struct RunPromptBuilder {
         lines.append("SESSION: \(workout.sport) on \(label(workout.start)) at \(workout.start.formatted(date: .omitted, time: .shortened))")
         var basics = ["duration \(WorkoutFormat.duration(workout.durationMinutes * 60))"]
         if let km = workout.distanceKm { basics.append("distance \(num(km, 2)) km") }
-        if workout.isFootSport, let pace = detail.averagePaceSecondsPerKm { basics.append("avg pace \(WorkoutFormat.pace(pace)) /km") }
+        if workout.isFootSport, let pace = workout.paceSecondsPerKm { basics.append("avg moving pace \(WorkoutFormat.pace(pace)) /km") }
         if !workout.isFootSport, let km = workout.distanceKm, km > 0 { basics.append("avg speed \(num(km / (workout.durationMinutes / 60), 1)) km/h") }
         basics.append("avg HR \(num(workout.averageHeartRate, 0))")
         basics.append("max HR \(num(workout.maxHeartRate, 0))")
@@ -132,7 +132,7 @@ nonisolated struct RunPromptBuilder {
             lines.append("")
             lines.append("PREVIOUS \(workout.sport.uppercased()) SESSIONS (date | min | km | pace | avg HR | load)")
             for session in previous {
-                let pace = session.distanceKm.flatMap { $0 > 0 ? session.durationMinutes * 60 / $0 : nil }
+                let pace = session.paceSecondsPerKm
                 lines.append([
                     label(session.start),
                     num(session.durationMinutes, 0),

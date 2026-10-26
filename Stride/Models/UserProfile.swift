@@ -63,11 +63,16 @@ nonisolated struct UserProfile: Codable, Equatable, Sendable {
 
     var isMaxHeartRateEstimated: Bool { maxHeartRate == nil }
 
+    /// Four floors, each above the one before, so every zone has a range.
+    var hasValidCustomZones: Bool {
+        customZoneFloors.count == 4 && zip(customZoneFloors, customZoneFloors.dropFirst()).allSatisfy(<)
+    }
+
     func heartRateZones(restingHR: Double) -> HeartRateZones {
         let maxHR = effectiveMaxHeartRate
         let shares = [0.6, 0.7, 0.8, 0.9]
         switch zoneMethod {
-        case .custom where customZoneFloors.count == 4 && customZoneFloors == customZoneFloors.sorted():
+        case .custom where hasValidCustomZones:
             return HeartRateZones(floors: customZoneFloors.map(Double.init), method: zoneMethod)
         case .heartRateReserve where maxHR > restingHR:
             return HeartRateZones(floors: shares.map { restingHR + $0 * (maxHR - restingHR) }, method: zoneMethod)

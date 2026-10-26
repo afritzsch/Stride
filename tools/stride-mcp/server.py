@@ -32,7 +32,12 @@ DEVICE_TYPE_NAME = "iPhone 18 Pro"
 
 
 def run(*args: str, check: bool = True, timeout: int = 900) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, check=check, timeout=timeout)
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    if check and result.returncode:
+        # CalledProcessError hides stderr, which is the part that says why simctl failed.
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(f"{' '.join(args)} failed ({result.returncode}): {detail}")
+    return result
 
 
 def simctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -61,11 +66,7 @@ def device_udid() -> str:
 
 def boot() -> str:
     udid = device_udid()
-    state = simctl("list", "devices", "-j").stdout
-    if f'"udid" : "{udid}"' in state and '"state" : "Booted"' in state.split(udid)[1].split("}")[0]:
-        return udid
-    simctl("boot", udid, check=False)
-    simctl("bootstatus", udid, "-b")
+    simctl("bootstatus", udid, "-b")  # boots the device if needed, then waits until it's ready
     return udid
 
 
@@ -108,8 +109,8 @@ def launch(
     route: dashboard | coach | plan | settings | workouts | workout:<latest|latest-run|index|uuid>
     demo: force demo data on/off (None keeps the app's setting).
     fixture: path on this Mac to a HealthFixture JSON to replay instead of HealthKit; omit to clear.
-    scroll_to: on a workout screen, scroll to heart-rate | zones | splits | review | analysis.
-    analyze: run the analysis for the opened workout.
+    scroll_to: on the first workout opened, scroll to route | heart-rate | zones | splits | review | analysis.
+    analyze: review the first workout opened (only workout routes support this).
     engine: claude | onDevice (Apple Intelligence).
     """
     if not APP.exists():
@@ -185,12 +186,18 @@ def export_fixture(output: str, demo: bool | None = True) -> str:
     """Have the app export what it reads (demo data by default, else its fixture or HealthKit) to a JSON fixture."""
     udid = boot()
     simctl("terminate", udid, BUNDLE_ID, check=False)
+    container = data_container(udid)
+    source = container / "Documents" / "export.json" if container else None
+    if container:
+        # A fixture left by `launch --fixture` would be exported instead of demo data, and an export left
+        # by an earlier timed-out run would be picked up before the app writes the new one.
+        if demo:
+            (container / "Documents" / "fixture.json").unlink(missing_ok=True)
+        source.unlink(missing_ok=True)
     args = ["-exportFixture", "YES"]
     if demo is not None:
         args += ["-useDemoData", "YES" if demo else "NO"]
     simctl("launch", udid, BUNDLE_ID, *args)
-    container = data_container(udid)
-    source = container / "Documents" / "export.json" if container else None
     for _ in range(40):
         if source and source.exists():
             shutil.copyfile(source, output)
@@ -204,6 +211,8 @@ def coarsen_fixture(source: str, output: str, hr_interval: int = 120, bucket_min
     """Rewrite a fixture so it looks like a watch app that shares little detail: heart rate only every
     `hr_interval` seconds and distance/steps in clock-aligned `bucket_minutes` chunks that spill past the
     workout's start and end. Useful for testing how the app copes with sparse data."""
+    if bucket_minutes <= 0 or 60 % bucket_minutes:
+        raise ValueError("bucket_minutes must divide 60 (e.g. 5, 10, 15, 30, 60)")
     fixture = json.loads(Path(source).read_text())
 
     def parse(value: str) -> datetime:
@@ -255,7 +264,7 @@ def serve() -> None:
     ) -> dict:
         """Install and relaunch Stride on a screen. route: dashboard | coach | plan | settings | workouts |
         workout:<latest|latest-run|index|uuid>. fixture: Mac path of a HealthFixture JSON to replay.
-        scroll_to: heart-rate | zones | splits | review | analysis. engine: claude | onDevice."""
+        scroll_to: route | heart-rate | zones | splits | review | analysis. engine: claude | onDevice."""
         return launch(route, demo, fixture, scroll_to, analyze, engine, reinstall)
 
     @mcp.tool(name="screenshot")
@@ -307,6 +316,7 @@ def cli(argv: list[str]) -> None:
     p.add_argument("--seconds", type=int, default=60)
     p = sub.add_parser("export-fixture")
     p.add_argument("output")
+    # Without demo data the app exports its fixture, or HealthKit when there's none.
     p.add_argument("--no-demo", dest="demo", action="store_const", const=None, default=True)
     p = sub.add_parser("coarsen-fixture")
     p.add_argument("source")

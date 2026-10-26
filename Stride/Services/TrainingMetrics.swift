@@ -51,7 +51,6 @@ nonisolated struct MetricsReport: Sendable {
     var weeks: [WeeklySummary]
     var dailyLoad: [Date: Double]
     var workoutLoad: [UUID: Double]
-    var workoutZone: [UUID: IntensityZone]
     var indicators: TrainingIndicators
     var heartRateZones: HeartRateZones
 
@@ -81,7 +80,10 @@ nonisolated struct MetricsReport: Sendable {
         }
         ind.acuteLoad = last7Loads.reduce(0, +)
         ind.chronicLoad = dailyLoad.filter { $0.key >= start28 }.values.reduce(0, +) / 4
-        ind.acwr = ind.chronicLoad > 0 ? ind.acuteLoad / ind.chronicLoad : nil
+        // With less than 28 days of synced data the chronic average is too low and the ratio reads as overload.
+        let firstSynced = snapshot.days.first { $0.steps != nil || $0.restingHeartRate != nil }?.date
+        let hasChronicHistory = firstSynced.map { $0 <= start28 } ?? false
+        ind.acwr = hasChronicHistory && ind.chronicLoad > 0 ? ind.acuteLoad / ind.chronicLoad : nil
         if let sd = Self.standardDeviation(last7Loads), sd > 0 {
             ind.monotony = (ind.acuteLoad / 7) / sd
         }
@@ -113,10 +115,9 @@ nonisolated struct MetricsReport: Sendable {
 
         self.dailyLoad = dailyLoad
         self.workoutLoad = workoutLoad
-        self.workoutZone = workoutZone
         self.indicators = ind
         self.heartRateZones = zones
-        self.weeks = Self.weeklySummaries(snapshot: snapshot, workoutLoad: workoutLoad, workoutZone: workoutZone)
+        self.weeks = Self.weeklySummaries(snapshot: snapshot, workoutLoad: workoutLoad, workoutZone: workoutZone, calendar: calendar)
     }
 
     // MARK: - Formulas
@@ -143,17 +144,17 @@ nonisolated struct MetricsReport: Sendable {
     private static func weeklySummaries(
         snapshot: HealthSnapshot,
         workoutLoad: [UUID: Double],
-        workoutZone: [UUID: IntensityZone]
+        workoutZone: [UUID: IntensityZone],
+        calendar: Calendar
     ) -> [WeeklySummary] {
-        var iso = Calendar(identifier: .iso8601)
-        iso.timeZone = .current
+        // ISO weeks (Monday start) in the caller's time zone.
+        var iso = calendar
+        iso.firstWeekday = 2
+        iso.minimumDaysInFirstWeek = 4
         func weekStart(_ date: Date) -> Date { iso.dateInterval(of: .weekOfYear, for: date)?.start ?? date }
 
-        var weeks: [Date: WeeklySummary] = [:]
-        for day in snapshot.days {
-            let key = weekStart(day.date)
-            weeks[key] = weeks[key] ?? WeeklySummary(weekStart: key)
-        }
+        let daysByWeek = Dictionary(grouping: snapshot.days) { weekStart($0.date) }
+        var weeks = Dictionary(uniqueKeysWithValues: daysByWeek.keys.map { ($0, WeeklySummary(weekStart: $0)) })
         for workout in snapshot.workouts {
             let key = weekStart(workout.start)
             var week = weeks[key] ?? WeeklySummary(weekStart: key)
@@ -164,7 +165,6 @@ nonisolated struct MetricsReport: Sendable {
             if workoutZone[workout.id] == .hard { week.hardSessions += 1 }
             weeks[key] = week
         }
-        let daysByWeek = Dictionary(grouping: snapshot.days) { weekStart($0.date) }
         let sleepByWeek = Dictionary(grouping: snapshot.sleep) { weekStart($0.date) }
         for key in weeks.keys {
             let days = daysByWeek[key] ?? []
@@ -189,6 +189,7 @@ nonisolated struct MetricsReport: Sendable {
         return sorted.count.isMultiple(of: 2) ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
     }
 
+    /// Population SD (divides by n), as in Foster's monotony.
     static func standardDeviation(_ values: [Double]) -> Double? {
         guard values.count >= 2, let avg = mean(values) else { return nil }
         let variance = values.map { ($0 - avg) * ($0 - avg) }.reduce(0, +) / Double(values.count)

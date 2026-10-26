@@ -18,8 +18,8 @@ extension HealthFixture {
 /// Hooks for driving the app from the Simulator (see tools/stride-mcp). Debug builds only read these
 /// launch arguments:
 ///   -route dashboard | coach | plan | settings | workouts | workout:<latest | latest-run | index | uuid>
-///   -scrollTo <section>   scroll an opened workout to splits, zones, heart-rate, or review
-///   -analyze YES          run the analysis for the opened screen
+///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis
+///   -analyze YES          review the first opened workout
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
 extension AppModel {
@@ -34,19 +34,14 @@ extension AppModel {
         }
     }
 
-    var launchScrollTarget: String? {
+    /// The -scrollTo and -analyze hooks, returned once so later workouts opened in the session don't repeat them.
+    func consumeLaunchHooks() -> (scrollTarget: String?, analyze: Bool) {
         #if DEBUG
-        UserDefaults.standard.string(forKey: "scrollTo")
+        guard !launchHooksConsumed else { return (nil, false) }
+        launchHooksConsumed = true
+        return (UserDefaults.standard.string(forKey: "scrollTo"), UserDefaults.standard.bool(forKey: "analyze"))
         #else
-        nil
-        #endif
-    }
-
-    var launchAnalyze: Bool {
-        #if DEBUG
-        UserDefaults.standard.bool(forKey: "analyze")
-        #else
-        false
+        return (nil, false)
         #endif
     }
 
@@ -144,7 +139,7 @@ extension AppModel {
                     "index": index, "id": workout.id.uuidString, "sport": workout.sport, "source": workout.sourceName,
                     "start": iso.string(from: workout.start), "minutes": round(workout.durationMinutes),
                     "km": round(workout.distanceKm, 2),
-                    "pace": workout.isFootSport ? WorkoutFormat.pace(workout.distanceKm.flatMap { $0 > 0 ? workout.durationMinutes * 60 / $0 : nil }) : NSNull(),
+                    "pace": workout.isFootSport ? WorkoutFormat.pace(workout.paceSecondsPerKm) : NSNull(),
                     "avgHR": round(workout.averageHeartRate, 0), "maxHR": round(workout.maxHeartRate, 0),
                     "load": round(metrics.workoutLoad[workout.id], 0),
                 ] as [String: Any]

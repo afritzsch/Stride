@@ -7,13 +7,13 @@ struct WorkoutListView: View {
         List {
             ForEach(Array((model.snapshot?.workouts ?? []).reversed())) { workout in
                 NavigationLink(value: DashboardDestination.workout(workout)) {
-                    WorkoutRow(workout: workout, load: model.metrics?.workoutLoad[workout.id], isReviewed: model.runAnalyses[workout.id] != nil)
+                    WorkoutRow(workout: workout)
                 }
             }
         }
         .overlay {
             if model.snapshot?.workouts.isEmpty ?? true {
-                ContentUnavailableView("No workouts", systemImage: "figure.run", description: Text("No workouts in Apple Health for the last 8 weeks."))
+                ContentUnavailableView("No workouts", systemImage: "figure.run", description: Text("No workouts in Apple Health for the last \(HealthKitService.windowWeeks) weeks."))
             }
         }
         .navigationTitle("Workouts")
@@ -21,9 +21,11 @@ struct WorkoutListView: View {
 }
 
 struct WorkoutRow: View {
+    @Environment(AppModel.self) private var model
     var workout: WorkoutSummary
-    var load: Double?
-    var isReviewed = false
+
+    private var load: Double? { model.metrics?.workoutLoad[workout.id] }
+    private var isReviewed: Bool { model.runAnalyses[workout.id] != nil }
 
     var body: some View {
         HStack {
@@ -31,7 +33,7 @@ struct WorkoutRow: View {
                 HStack(spacing: 4) {
                     Text(workout.sport).font(.subheadline.bold())
                     if isReviewed {
-                        Image(systemName: "sparkles").font(.caption2).foregroundStyle(.tint)
+                        Image(systemName: "sparkles").font(.caption2).foregroundStyle(.tint).accessibilityLabel("Reviewed")
                     }
                 }
                 Text(workout.start.formatted(.dateTime.weekday().day().month()))
@@ -54,7 +56,7 @@ struct WorkoutRow: View {
         var parts = ["\(Int(workout.durationMinutes)) min"]
         if let km = workout.distanceKm {
             parts.append("\(Format.number(km, digits: 1)) km")
-            if workout.isFootSport { parts.append("\(WorkoutFormat.pace(workout.durationMinutes * 60 / km)) /km") }
+            if workout.isFootSport { parts.append("\(WorkoutFormat.pace(workout.paceSecondsPerKm)) /km") }
         }
         if let hr = workout.averageHeartRate { parts.append("\(Int(hr)) bpm") }
         return parts.joined(separator: " · ")

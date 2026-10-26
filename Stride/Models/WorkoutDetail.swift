@@ -5,12 +5,6 @@ nonisolated struct TimedValue: Hashable, Sendable {
     var value: Double
 }
 
-nonisolated struct DistanceSample: Sendable {
-    var start: Date
-    var end: Date
-    var meters: Double
-}
-
 /// A HealthKit quantity sample reduced to plain values, so workout processing can run on HealthKit data,
 /// demo data, or an exported fixture alike.
 nonisolated struct RawSample: Codable, Hashable, Sendable {
@@ -74,7 +68,6 @@ nonisolated struct Split: Hashable, Identifiable, Sendable {
     var index: Int
     /// 1.0 except for a final partial split.
     var distanceKm: Double
-    var start: Date
     var duration: TimeInterval
     var averageHeartRate: Double?
 
@@ -104,10 +97,20 @@ nonisolated struct WorkoutDetail: Sendable {
     /// Data-quality caveats to show the athlete and pass to the AI.
     var dataNotes: [String] = []
 
-    var averagePaceSecondsPerKm: Double? {
-        guard let km = summary.distanceKm, km > 0 else { return nil }
-        return summary.durationMinutes * 60 / km
-    }
+    // Data-quality thresholds: below these, numbers aren't derived from the samples (see `build`).
+    /// Longest median sample length for distance or steps to count as fine-grained.
+    static let maxSampleSeconds = 120.0
+    /// How far summed distance samples or a GPS route may be off the workout's distance.
+    static let distanceTolerance = 0.15
+    /// Longest stretch credited to a single heart-rate reading.
+    static let maxHeartRateGapSeconds = 300.0
+    /// Median gap above which heart rate is flagged as sparse.
+    static let sparseHeartRateSeconds = 30.0
+    /// GPS fixes less accurate than this are dropped.
+    static let maxGPSAccuracyM = 50.0
+    /// Step samples have to cover this share of the workout for cadence.
+    static let minStepCoverage = 0.8
+    static let plausibleRunCadence = 90.0...230.0
 
     /// Seconds in each of the five heart-rate zones.
     func zoneSeconds(zones: HeartRateZones) -> [Double] {
@@ -115,7 +118,7 @@ nonisolated struct WorkoutDetail: Sendable {
         for (index, sample) in heartRate.enumerated() {
             let next = index + 1 < heartRate.count ? heartRate[index + 1].date : end
             // Cap gaps so a sparse series or a pause doesn't credit one reading with minutes of time.
-            let gap = min(max(next.timeIntervalSince(sample.date), 0), 300)
+            let gap = min(max(next.timeIntervalSince(sample.date), 0), Self.maxHeartRateGapSeconds)
             seconds[zones.index(for: sample.value)] += gap
         }
         return seconds
@@ -183,16 +186,15 @@ nonisolated struct WorkoutDetail: Sendable {
         let heartRate = preferred(raw.heartRate)
             .filter { window.contains($0.start) }
             .map { TimedValue(date: $0.start, value: $0.value) }
-        let gaps = zip(heartRate.dropFirst(), heartRate).map { $0.date.timeIntervalSince($1.date) }
-        let heartRateInterval = MetricsReport.median(gaps)
+        let heartRateInterval = medianGap(heartRate.map(\.date))
         if heartRate.isEmpty {
             notes.append("No heart-rate readings were shared for this workout.")
-        } else if let heartRateInterval, heartRateInterval > 30 {
+        } else if let heartRateInterval, heartRateInterval > Self.sparseHeartRateSeconds {
             notes.append("Heart rate was only recorded about every \(Int(heartRateInterval.rounded())) s, so the chart and zones are approximate.")
         }
 
         let route = (raw.route ?? [])
-            .filter { window.contains($0.date) && ($0.accuracyM ?? 0) <= 50 }
+            .filter { window.contains($0.date) && ($0.accuracyM ?? 0) <= Self.maxGPSAccuracyM }
             .sorted { $0.date < $1.date }
 
         var splits: [Split] = []
@@ -201,14 +203,10 @@ nonisolated struct WorkoutDetail: Sendable {
             let distance = clipped(ownDistance)
             let covered = distance.map(\.value).reduce(0, +)
             let expected = (summary.distanceKm ?? 0) * 1000
-            let isGranular = (medianDuration(ownDistance) ?? .infinity) <= 120 && distance.count >= 3
-            let isConsistent = expected <= 0 || abs(covered - expected) / expected <= 0.15
+            let isGranular = (medianDuration(ownDistance) ?? .infinity) <= Self.maxSampleSeconds && distance.count >= 3
+            let isConsistent = expected <= 0 || abs(covered - expected) / expected <= Self.distanceTolerance
             if isGranular && isConsistent {
-                splits = Self.splits(
-                    from: distance.map { DistanceSample(start: $0.start, end: $0.end, meters: $0.value) },
-                    heartRate: heartRate,
-                    workoutStart: raw.start
-                )
+                splits = Self.splits(from: distance, heartRate: heartRate, workoutStart: raw.start)
             } else if let gps = Self.distanceSamples(route: route, expectedMeters: expected) {
                 splits = Self.splits(from: gps, heartRate: heartRate, workoutStart: raw.start)
                 notes.append("Km splits are computed from the GPS route, so they can differ slightly from your watch's.")
@@ -221,10 +219,17 @@ nonisolated struct WorkoutDetail: Sendable {
 
         var cadence: Double?
         if summary.isFootSport {
-            let ownSteps = preferred(raw.steps)
-            if (medianDuration(ownSteps) ?? .infinity) <= 120 {
-                let perMinute = clipped(ownSteps).map(\.value).reduce(0, +) / max(window.duration / 60, 1)
-                cadence = (90...230).contains(perMinute) ? perMinute : nil
+            // Own source only: summing phone and watch steps would double the cadence.
+            let ownSteps = raw.steps.filter { $0.source == raw.source }
+            let steps = clipped(ownSteps)
+            // Divide by the time the samples cover, not the elapsed time, so pauses don't lower cadence.
+            let coveredSeconds = steps.map { $0.end.timeIntervalSince($0.start) }.reduce(0, +)
+            if (medianDuration(ownSteps) ?? .infinity) <= Self.maxSampleSeconds,
+               coveredSeconds >= window.duration * Self.minStepCoverage, coveredSeconds > 0 {
+                let perMinute = steps.map(\.value).reduce(0, +) / (coveredSeconds / 60)
+                cadence = Self.plausibleRunCadence.contains(perMinute) ? perMinute : nil
+            } else if !raw.steps.isEmpty {
+                notes.append("Steps weren't shared in fine enough detail from this workout's device, so cadence isn't available.")
             }
         } else {
             cadence = raw.cyclingCadence
@@ -250,24 +255,29 @@ nonisolated struct WorkoutDetail: Sendable {
         )
     }
 
-    /// Distance between consecutive GPS fixes, scaled to the workout's distance. Nil when the route is too
-    /// sparse or its length doesn't match the workout's within 15%.
-    static func distanceSamples(route: [RoutePoint], expectedMeters: Double) -> [DistanceSample]? {
-        guard route.count >= 10 else { return nil }
-        let gaps = zip(route.dropFirst(), route).map { $0.date.timeIntervalSince($1.date) }
-        guard let gap = MetricsReport.median(gaps), gap <= 15 else { return nil }
-        let samples = zip(route, route.dropFirst()).map { DistanceSample(start: $0.date, end: $1.date, meters: $0.distance(to: $1)) }
-        let covered = samples.map(\.meters).reduce(0, +)
-        guard covered > 0 else { return nil }
-        guard expectedMeters > 0 else { return samples }
-        guard abs(covered - expectedMeters) / expectedMeters <= 0.15 else { return nil }
-        // Scale so split boundaries line up with the watch's total distance.
-        let scale = expectedMeters / covered
-        return samples.map { DistanceSample(start: $0.start, end: $0.end, meters: $0.meters * scale) }
+    /// Median time between consecutive dates, in seconds.
+    static func medianGap(_ dates: [Date]) -> Double? {
+        MetricsReport.median(zip(dates.dropFirst(), dates).map { $0.timeIntervalSince($1) })
     }
 
-    /// Kilometer splits from distance samples, assuming constant speed within each sample.
-    static func splits(from samples: [DistanceSample], heartRate: [TimedValue], workoutStart: Date) -> [Split] {
+    /// Distance in meters between consecutive GPS fixes, scaled to the workout's distance. Nil when the
+    /// route is too sparse or its length doesn't match the workout's within `distanceTolerance`.
+    static func distanceSamples(route: [RoutePoint], expectedMeters: Double) -> [RawSample]? {
+        guard route.count >= 10, let gap = medianGap(route.map(\.date)), gap <= 15 else { return nil }
+        let samples = zip(route, route.dropFirst()).map {
+            RawSample(start: $0.date, end: $1.date, value: $0.distance(to: $1), source: "GPS")
+        }
+        let covered = samples.map(\.value).reduce(0, +)
+        guard covered > 0 else { return nil }
+        guard expectedMeters > 0 else { return samples }
+        guard abs(covered - expectedMeters) / expectedMeters <= distanceTolerance else { return nil }
+        // Scale so split boundaries line up with the watch's total distance.
+        let scale = expectedMeters / covered
+        return samples.map { var sample = $0; sample.value *= scale; return sample }
+    }
+
+    /// Kilometer splits from distance samples (values in meters), assuming constant speed within each sample.
+    static func splits(from samples: [RawSample], heartRate: [TimedValue], workoutStart: Date) -> [Split] {
         var splits: [Split] = []
         var covered = 0.0
         var nextBoundary = 1000.0
@@ -279,24 +289,24 @@ nonisolated struct WorkoutDetail: Sendable {
             splits.append(Split(
                 index: splits.count + 1,
                 distanceKm: distance / 1000,
-                start: splitStart,
                 duration: end.timeIntervalSince(splitStart),
                 averageHeartRate: hr.isEmpty ? nil : hr.reduce(0, +) / Double(hr.count)
             ))
             splitStart = end
         }
 
-        for sample in samples.sorted(by: { $0.start < $1.start }) where sample.meters > 0 {
+        for sample in samples.sorted(by: { $0.start < $1.start }) where sample.value > 0 {
+            let meters = sample.value
             let sampleDuration = sample.end.timeIntervalSince(sample.start)
             var used = 0.0
-            while covered + (sample.meters - used) >= nextBoundary {
+            while covered + (meters - used) >= nextBoundary {
                 used += nextBoundary - covered
-                let crossing = sample.start.addingTimeInterval(sampleDuration * used / sample.meters)
+                let crossing = sample.start.addingTimeInterval(sampleDuration * used / meters)
                 appendSplit(distance: 1000, until: crossing)
                 covered = nextBoundary
                 nextBoundary += 1000
             }
-            covered += sample.meters - used
+            covered += meters - used
             lastEnd = max(lastEnd, sample.end)
         }
 
@@ -310,6 +320,12 @@ nonisolated struct WorkoutDetail: Sendable {
 
 nonisolated extension WorkoutSummary {
     var isFootSport: Bool { ["Running", "Walking", "Hiking"].contains(sport) }
+
+    /// Average pace over moving time (HealthKit's workout duration excludes pauses).
+    var paceSecondsPerKm: Double? {
+        guard let km = distanceKm, km > 0 else { return nil }
+        return durationMinutes * 60 / km
+    }
 }
 
 nonisolated enum WorkoutFormat {

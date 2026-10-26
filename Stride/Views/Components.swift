@@ -11,9 +11,59 @@ struct Card<Content: View>: View {
             }
             content
         }
-        .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: .rect(cornerRadius: 16))
+        .cardBackground()
+    }
+}
+
+extension View {
+    /// The padded, rounded background shared by all cards.
+    func cardBackground() -> some View {
+        padding().background(.background.secondary, in: .rect(cornerRadius: 16))
+    }
+}
+
+struct ErrorCard: View {
+    var message: String
+
+    var body: some View {
+        Card { Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+    }
+}
+
+/// Run button with progress, blocker, notice and error lines, for the weekly analysis and workout reviews.
+struct AnalyzeControls: View {
+    @Environment(AppModel.self) private var model
+    var isRunning: Bool
+    var runningText: String
+    var buttonTitle: String
+    var isDisabled = false
+    var notice: String?
+    var error: String?
+    var action: () -> Void
+
+    var body: some View {
+        if isRunning {
+            HStack(spacing: 12) {
+                ProgressView()
+                Text(runningText).font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            Button(action: action) {
+                Label(buttonTitle, systemImage: "wand.and.stars").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isDisabled || model.engineBlocker != nil)
+        }
+        if let blocker = model.engineBlocker {
+            Text(blocker).font(.footnote).foregroundStyle(.orange)
+        }
+        if let notice {
+            Text(notice).font(.footnote).foregroundStyle(.secondary)
+        }
+        if let error {
+            Text(error).font(.footnote).foregroundStyle(.red)
+        }
     }
 }
 
@@ -39,9 +89,8 @@ struct MetricTile: View {
                     .lineLimit(2)
             }
         }
-        .padding()
-        .frame(maxWidth: .infinity, minHeight: 104, alignment: .topLeading)
-        .background(.background.secondary, in: .rect(cornerRadius: 16))
+        .frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading)
+        .cardBackground()
     }
 }
 
@@ -56,6 +105,26 @@ struct StatusBadge: View {
             .padding(.vertical, 4)
             .background(color.opacity(0.18), in: .capsule)
             .foregroundStyle(color)
+    }
+}
+
+extension Color {
+    /// Heart-rate zone colors, Z1 (index 0) to Z5; the accent color for nil (no reading).
+    static func heartRateZone(_ index: Int?) -> Color {
+        guard let index else { return .accentColor }
+        return [.gray, .blue, .green, .orange, .red][min(max(index, 0), 4)]
+    }
+}
+
+extension EffortLevel {
+    var color: Color {
+        switch self {
+        case .recovery: .gray
+        case .easy: .green
+        case .moderate: .blue
+        case .hard: .orange
+        case .maximal: .red
+        }
     }
 }
 
@@ -125,8 +194,10 @@ enum Format {
 
     static func delta(_ current: Double?, _ baseline: Double?, unit: String, digits: Int = 0) -> String? {
         guard let current, let baseline else { return nil }
-        let diff = current - baseline
-        let sign = diff >= 0 ? "+" : "−"
+        // Round before choosing the sign, so a tiny drop shows "+0", not "−0".
+        let factor = pow(10, Double(digits))
+        let diff = ((current - baseline) * factor).rounded() / factor
+        let sign = diff < 0 ? "−" : "+"
         return "\(sign)\(abs(diff).formatted(.number.precision(.fractionLength(digits))))\(unit) vs 4-wk avg"
     }
 }

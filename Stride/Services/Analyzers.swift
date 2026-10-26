@@ -6,7 +6,8 @@ nonisolated enum AnalyzerError: LocalizedError {
     case api(status: Int, message: String)
     case refused
     case truncated
-    case malformedResponse
+    /// Carries the decoding error and the start of the text for debugging; the user sees a generic message.
+    case malformedResponse(String)
     case onDeviceUnavailable(String)
     case notReady(String)
     case appleIntelligence(String)
@@ -31,15 +32,19 @@ nonisolated enum AnalyzerError: LocalizedError {
 nonisolated struct ClaudeAnalyzer {
     var apiKey: String
     var model = "claude-opus-5-5"
+    static let displayName = "Claude Opus 5.5"
 
     private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    /// Thinking (always on for this model) counts toward this, so leave room beyond the report itself.
+    private static let maxTokens = 32000
+    private static let maxAttempts = 3
 
     func analyze<Output: StructuredOutput>(_: Output.Type, instructions: String, prompt: String) async throws -> Output {
         guard !apiKey.isEmpty else { throw AnalyzerError.missingAPIKey }
 
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
-        request.timeoutInterval = 300
+        request.timeoutInterval = 600
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
@@ -48,7 +53,7 @@ nonisolated struct ClaudeAnalyzer {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 16000,
+            "max_tokens": Self.maxTokens,
             "fallbacks": "default",
             "system": instructions,
             "messages": [["role": "user", "content": prompt]],
@@ -59,25 +64,42 @@ nonisolated struct ClaudeAnalyzer {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard status == 200 else {
-            let message = (try? JSONDecoder().decode(APIErrorEnvelope.self, from: data))?.error.message
-            throw AnalyzerError.api(status: status, message: message ?? HTTPURLResponse.localizedString(forStatusCode: status))
-        }
-
+        let data = try await send(request)
         let message = try JSONDecoder().decode(MessageResponse.self, from: data)
         switch message.stopReason {
         case "refusal": throw AnalyzerError.refused
         case "max_tokens": throw AnalyzerError.truncated
         default: break
         }
-        let text = message.content.filter { $0.type == "text" }.compactMap(\.text).joined()
+        // After a server-side fallback, content holds the first model's partial output, a "fallback"
+        // block, then the fallback model's full output. Only the part after the last fallback counts.
+        let start = message.content.lastIndex { $0.type == "fallback" }.map { $0 + 1 } ?? 0
+        let text = message.content[start...].filter { $0.type == "text" }.compactMap(\.text).joined()
         do {
             return try JSONDecoder().decode(Output.self, from: Data(text.utf8))
         } catch {
-            throw AnalyzerError.malformedResponse
+            throw AnalyzerError.malformedResponse("\(error) in: \(text.prefix(300))")
         }
+    }
+
+    /// Sends the request, retrying rate limits, overload and server errors with backoff.
+    private func send(_ request: URLRequest) async throws -> Data {
+        for attempt in 1...Self.maxAttempts {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let http = response as? HTTPURLResponse
+            let status = http?.statusCode ?? 0
+            if status == 200 { return data }
+
+            let retryable = [408, 409, 429].contains(status) || status >= 500
+            if retryable, attempt < Self.maxAttempts {
+                let retryAfter = http?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init)
+                try await Task.sleep(for: .seconds(min(retryAfter ?? Double(2 << attempt), 60)))
+                continue
+            }
+            let message = (try? JSONDecoder().decode(APIErrorEnvelope.self, from: data))?.error.message
+            throw AnalyzerError.api(status: status, message: message ?? HTTPURLResponse.localizedString(forStatusCode: status))
+        }
+        preconditionFailure("unreachable")
     }
 
     private struct MessageResponse: Decodable {
@@ -159,9 +181,7 @@ nonisolated struct AppleAnalyzer {
     }
 
     static var privateCloudBlocker: String? {
-        guard isPrivateCloudInBuild else {
-            return "Private Cloud Compute needs an entitlement only paid Apple Developer accounts can get."
-        }
+        #if PRIVATE_CLOUD_COMPUTE
         let model = PrivateCloudComputeLanguageModel()
         switch model.availability {
         case .available:
@@ -177,14 +197,19 @@ nonisolated struct AppleAnalyzer {
             return quotaMessage(resetDate: model.quotaUsage.resetDate)
         }
         return nil
+        #else
+        return "Private Cloud Compute needs an entitlement only paid Apple Developer accounts can get."
+        #endif
     }
 
     /// Short status for Settings.
     static var privateCloudStatus: String {
         if let blocker = privateCloudBlocker { return blocker }
+        #if PRIVATE_CLOUD_COMPUTE
         if case .belowLimit(let usage) = PrivateCloudComputeLanguageModel().quotaUsage.status, usage.isApproachingLimit {
             return "Ready, close to the usage limit"
         }
+        #endif
         return "Ready"
     }
 
@@ -196,6 +221,7 @@ nonisolated struct AppleAnalyzer {
     ) async throws -> Result<Output> {
         var fallbackReason: String?
 
+        #if PRIVATE_CLOUD_COMPUTE
         if allowPrivateCloud {
             if let blocker = Self.privateCloudBlocker {
                 fallbackReason = blocker
@@ -214,6 +240,9 @@ nonisolated struct AppleAnalyzer {
                 }
             }
         }
+        #else
+        if allowPrivateCloud { fallbackReason = Self.privateCloudBlocker }
+        #endif
 
         if let blocker = Self.onDeviceBlocker {
             throw AnalyzerError.onDeviceUnavailable([fallbackReason, blocker].compactMap(\.self).joined(separator: " "))
@@ -235,6 +264,8 @@ nonisolated struct AppleAnalyzer {
             } catch LanguageModelError.contextSizeExceeded {
                 if index == prompts.count - 1 { throw AnalyzerError.contextTooLarge }
             } catch let error as LanguageModelError {
+                // Let Private Cloud Compute rate limits through, so `analyze` falls back to on-device.
+                if case .rateLimited = error, model is PrivateCloudComputeLanguageModel { throw error }
                 throw AnalyzerError.appleIntelligence(Self.describe(error))
             }
         }

@@ -2,7 +2,7 @@ import Foundation
 
 /// Plausible synthetic wearable data so the app can be tried in the Simulator or without a watch.
 nonisolated enum DemoData {
-    static func snapshot(days: Int = 56, calendar: Calendar = .current) -> HealthSnapshot {
+    static func snapshot(days: Int = HealthKitService.windowWeeks * 7, calendar: Calendar = .current) -> HealthSnapshot {
         var rng = SeededGenerator(seed: 42)
         let now = Date()
         let today = calendar.startOfDay(for: now)
@@ -51,10 +51,11 @@ nonisolated enum DemoData {
             default: nil
             }
             if let (sport, minutes, heartRate, kmPerMinute) = plan, offset > 0,
-               let start = calendar.date(byAdding: .hour, value: 18, to: day) {
+               let start = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: day) {
                 let duration = minutes + Double.random(in: -5...8, using: &rng)
                 workouts.append(WorkoutSummary(
-                    id: UUID(),
+                    // Derived from the start so saved coach reviews still match after a relaunch.
+                    id: UUID(uuidString: String(format: "00000000-0000-4000-8000-%012llx", UInt64(start.timeIntervalSince1970)))!,
                     start: start,
                     durationMinutes: duration,
                     sport: sport,

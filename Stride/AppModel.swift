@@ -28,7 +28,9 @@ final class AppModel {
         }
     }
     var apiKey: String {
-        didSet { KeychainStore.save(apiKey, for: Keys.apiKey) }
+        didSet {
+            if !KeychainStore.save(apiKey, for: Keys.apiKey) { debugLog("Couldn't save the API key to the Keychain") }
+        }
     }
     /// Apple Intelligence: use the larger Private Cloud Compute model when available.
     var allowPrivateCloud: Bool {
@@ -44,6 +46,8 @@ final class AppModel {
 
     private(set) var history: [SavedAnalysis]
     private(set) var isAnalyzing = false
+    /// Workouts with a coach review in flight, so leaving and reopening a workout can't start a second one.
+    private(set) var analyzingWorkoutIDs: Set<UUID> = []
     var analysisError: String?
     /// Explains why the last analysis didn't use Private Cloud Compute.
     private(set) var analysisNotice: String?
@@ -59,9 +63,17 @@ final class AppModel {
     @ObservationIgnored var debugDetail: WorkoutDetail?
     /// Recent errors and notices, included in the debug state dump.
     @ObservationIgnored var debugEvents: [String] = []
+    /// The -scrollTo/-analyze launch hooks apply to the first workout opened only.
+    @ObservationIgnored var launchHooksConsumed = false
+    /// Bumped by each refresh so a slower, older one (e.g. after toggling demo data) can't overwrite a newer result.
+    @ObservationIgnored private var refreshGeneration = 0
     let health = HealthKitService()
 
     var latestAnalysis: SavedAnalysis? { history.first }
+
+    /// 28-day resting HR median, or a typical value until there's data.
+    var restingHRBaseline: Double { metrics?.indicators.restingHRBaseline ?? 60 }
+    var heartRateZones: HeartRateZones { metrics?.heartRateZones ?? profile.heartRateZones(restingHR: restingHRBaseline) }
 
     /// nil when the selected engine can run, otherwise why not.
     var engineBlocker: String? {
@@ -91,6 +103,8 @@ final class AppModel {
     // MARK: - Health data
 
     func refresh() async {
+        refreshGeneration += 1
+        let generation = refreshGeneration
         healthError = nil
         defer { writeDebugState() }
         if let fixture {
@@ -105,19 +119,29 @@ final class AppModel {
             recomputeMetrics()
             return
         }
+        // Don't keep showing (or analyzing) demo data once it's switched off.
+        if snapshot?.isDemo == true {
+            snapshot = nil
+            metrics = nil
+        }
         guard HealthKitService.isAvailable else {
             healthError = "Apple Health isn't available on this device."
             return
         }
-        needsHealthAuthorization = await health.needsAuthorizationPrompt()
-        guard !needsHealthAuthorization else { return }
+        let needsAuthorization = await health.needsAuthorizationPrompt()
+        guard generation == refreshGeneration else { return }
+        needsHealthAuthorization = needsAuthorization
+        guard !needsAuthorization else { return }
 
         isLoadingHealth = true
-        defer { isLoadingHealth = false }
+        defer { if generation == refreshGeneration { isLoadingHealth = false } }
         do {
-            snapshot = try await health.fetchSnapshot()
+            let fetched = try await health.fetchSnapshot()
+            guard generation == refreshGeneration else { return }
+            snapshot = fetched
             recomputeMetrics()
         } catch {
+            guard generation == refreshGeneration else { return }
             healthError = error.localizedDescription
         }
     }
@@ -162,8 +186,7 @@ final class AppModel {
             )
             analysisNotice = result.notice
             let saved = SavedAnalysis(createdAt: .now, engine: engine, modelName: result.modelName, planStartDate: planStart, report: result.output)
-            history.insert(saved, at: 0)
-            history = Array(history.prefix(30))
+            history = Array(([saved] + history).prefix(Self.maxSavedAnalyses))
             JSONStore.save(history, to: JSONStore.analyses)
         } catch {
             analysisError = error.localizedDescription
@@ -206,6 +229,9 @@ final class AppModel {
     func analyzeWorkout(_ detail: WorkoutDetail, note: String) async throws -> String? {
         guard let snapshot, let metrics else { throw AnalyzerError.notReady("Health data isn't loaded yet.") }
         if let blocker = engineBlocker { throw AnalyzerError.notReady(blocker) }
+        let id = detail.summary.id
+        guard analyzingWorkoutIDs.insert(id).inserted else { return nil }
+        defer { analyzingWorkoutIDs.remove(id) }
 
         func prompt(compact: Bool) -> String {
             RunPromptBuilder(
@@ -255,7 +281,7 @@ final class AppModel {
         switch engine {
         case .claude:
             let output = try await ClaudeAnalyzer(apiKey: apiKey).analyze(Output.self, instructions: instructions, prompt: fullPrompt)
-            return (output, "Claude Opus 5.5", nil)
+            return (output, ClaudeAnalyzer.displayName, nil)
         case .apple:
             let result = try await AppleAnalyzer(allowPrivateCloud: usesPrivateCloud).analyze(
                 Output.self,
@@ -272,6 +298,8 @@ final class AppModel {
     private func persist(_ value: some Encodable, key: String) {
         UserDefaults.standard.set(try? JSONEncoder().encode(value), forKey: key)
     }
+
+    private static let maxSavedAnalyses = 30
 
     private enum Keys {
         static let profile = "profile"
