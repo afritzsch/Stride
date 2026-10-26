@@ -358,10 +358,9 @@ final class CoachToolbox {
         chat?.setActivity("Updating your plan…")
         guard let model else { return "No plan." }
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: .now)
-        guard let date = (0..<7).compactMap({ calendar.date(byAdding: .day, value: $0, to: today) })
-            .first(where: { PromptBuilder.dayLabel($0, calendar: calendar) == day.day }) else {
-            return "\(day.day) isn't one of the next 7 days. Use a label from the plan tool, e.g. \(PromptBuilder.dayLabel(today, calendar: calendar))."
+        let week = Self.days(7, calendar: calendar)
+        guard let date = week.first(where: { PromptBuilder.dayLabel($0, calendar: calendar) == day.day }) else {
+            return "\(day.day) isn't one of the next 7 days. Use a label from the plan tool, e.g. \(PromptBuilder.dayLabel(.now, calendar: calendar))."
         }
         var day = PlanCheck.normalized([day], labels: [day.day])[0]
         day.day = PromptBuilder.dayLabel(date, calendar: calendar)
@@ -369,7 +368,6 @@ final class CoachToolbox {
         chat?.notice("Plan changed: \(day.day) is now \(day.isRest ? "a rest day" : "\(day.session), \(day.durationMinutes) min").")
 
         // Check the week around the change against the athlete's limits.
-        let week = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
         let plan = week.compactMap { model.plannedSession(on: $0) }
         let labels = week.map { PromptBuilder.dayLabel($0, calendar: calendar) }
         let problems = plan.count == 7 ? PlanCheck.problems(plan, labels: labels, profile: model.profile) : []
@@ -378,11 +376,16 @@ final class CoachToolbox {
             : "Saved \(day.day): \(day.briefDescription). The next 7 days now break these rules: \(problems.joined(separator: " ")) Tell the athlete, and fix it if they agree."
     }
 
+    /// Midnight of today and the `count - 1` days after it.
+    private static func days(_ count: Int, calendar: Calendar) -> [Date] {
+        let today = calendar.startOfDay(for: .now)
+        return (0..<count).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+    }
+
     /// Today and the next 7 days whose label matches, or all of them for an empty label.
     private func comingDates(matching label: String) -> [Date]? {
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: .now)
-        let dates = (0..<8).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+        let dates = Self.days(8, calendar: calendar)
         let label = label.trimmingCharacters(in: .whitespaces)
         guard !label.isEmpty else { return dates }
         let matching = dates.filter { PromptBuilder.dayLabel($0, calendar: calendar).caseInsensitiveCompare(label) == .orderedSame }
@@ -424,8 +427,10 @@ final class CoachToolbox {
         guard let dates = comingDates(matching: label) else { return "\(label) isn't today or one of the next 7 days." }
         let calendar = Calendar.current
         let num = PromptBuilder.num
+        // Three days for all coming days, otherwise the one asked for.
+        let shown = dates.prefix(dates.count > 1 ? 3 : 1)
         var lines: [String] = []
-        for date in dates.prefix(label.isEmpty ? 3 : 1) {
+        for date in shown {
             var line = PromptBuilder.dayLabel(date, calendar: calendar)
             if let sun = forecast.sun(on: date, calendar: calendar) {
                 line += " (sunrise \(SessionScheduler.time(sun.sunrise, calendar: calendar)), sunset \(SessionScheduler.time(sun.sunset, calendar: calendar)))"
@@ -437,7 +442,8 @@ final class CoachToolbox {
                 lines.append("  \(SessionScheduler.clock(clock * 60)) \(num(hour.temperatureC, 0)) °C (feels \(num(hour.apparentTemperatureC, 0))), rain \(num(hour.precipitationChance * 100, 0))%, wind \(num(hour.windKph, 0)) km/h, \(hour.condition.title.lowercased())")
             }
         }
-        return lines.count <= dates.prefix(3).count ? "The forecast doesn't reach that day yet." : lines.joined(separator: "\n")
+        // Only the day headers: no hours fell on those days.
+        return lines.count <= shown.count ? "The forecast doesn't reach that day yet." : lines.joined(separator: "\n")
     }
 
     func scheduleSession(day label: String, start: String) -> String {
