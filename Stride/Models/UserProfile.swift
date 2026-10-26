@@ -41,6 +41,8 @@ nonisolated struct UserProfile: Codable, Equatable, Sendable {
     var zoneMethod = HeartRateZoneMethod.maxHeartRate
     /// Lower bounds of zones 2–5 in bpm, used when `zoneMethod` is `.custom`.
     var customZoneFloors: [Int] = []
+    /// Lower bounds of zones 2–5 as last copied for Garmin Connect, to notice when the watch falls out of date.
+    var garminZoneFloors: [Int] = []
     var trainingDaysPerWeek = 4
     var weeklyHoursAvailable = 5.0
 
@@ -75,9 +77,10 @@ nonisolated struct UserProfile: Codable, Equatable, Sendable {
         case .custom where hasValidCustomZones:
             return HeartRateZones(floors: customZoneFloors.map(Double.init), method: zoneMethod)
         case .heartRateReserve where maxHR > restingHR:
-            return HeartRateZones(floors: shares.map { restingHR + $0 * (maxHR - restingHR) }, method: zoneMethod)
+            let bpm = { restingHR + $0 * (maxHR - restingHR) }
+            return HeartRateZones(floors: shares.map(bpm), method: zoneMethod, zone1Floor: bpm(0.5))
         default:
-            return HeartRateZones(floors: shares.map { $0 * maxHR }, method: .maxHeartRate)
+            return HeartRateZones(floors: shares.map { $0 * maxHR }, method: .maxHeartRate, zone1Floor: 0.5 * maxHR)
         }
     }
 }
@@ -96,6 +99,7 @@ nonisolated extension UserProfile {
         maxHeartRate = try container.decodeIfPresent(Int.self, forKey: .maxHeartRate)
         zoneMethod = try value(.zoneMethod, defaults.zoneMethod)
         customZoneFloors = try value(.customZoneFloors, defaults.customZoneFloors)
+        garminZoneFloors = try value(.garminZoneFloors, defaults.garminZoneFloors)
         trainingDaysPerWeek = try value(.trainingDaysPerWeek, defaults.trainingDaysPerWeek)
         weeklyHoursAvailable = try value(.weeklyHoursAvailable, defaults.weeklyHoursAvailable)
         hasGoal = try value(.hasGoal, defaults.hasGoal)
@@ -128,6 +132,10 @@ nonisolated enum HeartRateZoneMethod: String, Codable, CaseIterable, Identifiabl
 nonisolated struct HeartRateZones: Equatable, Sendable {
     var floors: [Double]
     var method: HeartRateZoneMethod
+    /// Where zone 1 starts (50%), which Garmin asks for. Unknown for custom zones.
+    var zone1Floor: Double? = nil
+
+    var roundedFloors: [Int] { floors.map { Int($0.rounded()) } }
 
     /// 0-based zone index (0 = Z1 … 4 = Z5).
     func index(for bpm: Double) -> Int {
@@ -136,7 +144,7 @@ nonisolated struct HeartRateZones: Equatable, Sendable {
 
     /// "<117", "117–135", …, "≥175", in bpm.
     var ranges: [String] {
-        let bounds = floors.map { Int($0.rounded()) }
+        let bounds = roundedFloors
         return (0...4).map { zone in
             switch zone {
             case 0: "<\(bounds[0])"
@@ -149,5 +157,23 @@ nonisolated struct HeartRateZones: Equatable, Sendable {
     /// "Z1 <117, Z2 117–135, … bpm (% of max HR)" for prompts and captions.
     var summary: String {
         ranges.enumerated().map { "Z\($0.offset + 1) \($0.element)" }.joined(separator: ", ") + " bpm (\(method.title))"
+    }
+
+    /// The zones in the order Garmin Connect lists them (zone 5 first), to type into the watch's heart rate zone settings.
+    /// Garmin can't do % of HR reserve on every watch, but entering these bpm values gives the same zones.
+    func garminText(maxHR: Double) -> String {
+        let bounds = roundedFloors + [Int(maxHR.rounded())]
+        var lines = ["Heart rate zones for Garmin Connect (\(method.title))", "Max HR: \(bounds[4]) bpm"]
+        for zone in (1...4).reversed() {
+            lines.append("Zone \(zone + 1): \(bounds[zone - 1])–\(bounds[zone] - (zone == 4 ? 0 : 1)) bpm")
+        }
+        lines.append(zone1Floor.map { "Zone 1: \(Int($0.rounded()))–\(bounds[0] - 1) bpm" } ?? "Zone 1: below \(bounds[0]) bpm")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Largest difference in where a zone starts, compared with zones copied earlier. Nil if nothing was copied.
+    func drift(from copied: [Int]) -> Int? {
+        guard copied.count == floors.count else { return nil }
+        return zip(roundedFloors, copied).map { abs($0 - $1) }.max()
     }
 }
