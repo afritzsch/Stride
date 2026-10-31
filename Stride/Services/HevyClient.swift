@@ -10,6 +10,7 @@ nonisolated struct HevyClient: Sendable {
     static let baseURL = URL(string: "https://api.hevyapp.com/v1/")!
     /// The API's maximum for workouts and events.
     static let pageSize = 10
+    private static let requestTimeout: TimeInterval = 30
 
     nonisolated struct Account: Sendable {
         var name: String
@@ -43,7 +44,7 @@ nonisolated struct HevyClient: Sendable {
 
     /// One page of workouts, newest first.
     func workouts(page: Int) async throws -> (sessions: [StrengthSession], pageCount: Int) {
-        try Self.decodeWorkouts(await data("workouts", query: ["page": "\(page)", "pageSize": "\(Self.pageSize)"]))
+        try Self.decodeWorkouts(await data("workouts", query: pageQuery(page)))
     }
 
     /// A `GET /v1/workouts` response body.
@@ -54,8 +55,8 @@ nonisolated struct HevyClient: Sendable {
 
     /// One page of workouts changed or deleted since the date, oldest first.
     func events(since date: Date, page: Int) async throws -> (events: [Event], pageCount: Int) {
-        let since = ISO8601DateFormatter().string(from: date)
-        let response: EventsPage = try await get("workouts/events", query: ["page": "\(page)", "pageSize": "\(Self.pageSize)", "since": since])
+        let since = date.formatted(.iso8601)
+        let response: EventsPage = try await get("workouts/events", query: pageQuery(page).merging(["since": since]) { $1 })
         let events: [Event] = response.events.compactMap { event in
             switch event.type {
             case "updated": event.workout.map { .updated($0.session) }
@@ -66,6 +67,10 @@ nonisolated struct HevyClient: Sendable {
         return (events, response.page_count)
     }
 
+    private func pageQuery(_ page: Int) -> [String: String] {
+        ["page": "\(page)", "pageSize": "\(Self.pageSize)"]
+    }
+
     private func get<Response: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> Response {
         try Self.decoder.decode(Response.self, from: await data(path, query: query))
     }
@@ -74,9 +79,10 @@ nonisolated struct HevyClient: Sendable {
         var components = URLComponents(url: Self.baseURL.appending(path: path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) } }
         var request = URLRequest(url: components.url!)
-        request.setValue(apiKey, forHTTPHeaderField: "api-key")
+        // A key pasted from the clipboard often carries a trailing newline, which isn't a valid header value.
+        request.setValue(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), forHTTPHeaderField: "api-key")
         request.setValue("application/json", forHTTPHeaderField: "accept")
-        request.timeoutInterval = 30
+        request.timeoutInterval = Self.requestTimeout
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch status {
@@ -90,17 +96,27 @@ nonisolated struct HevyClient: Sendable {
 
     /// Hevy writes ISO 8601, with or without fractional seconds.
     static let decoder: JSONDecoder = {
+        let formats = DateFormats()
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let text = try decoder.singleValueContainer().decode(String.self)
-            let plain = ISO8601DateFormatter()
-            let fractional = ISO8601DateFormatter()
-            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = plain.date(from: text) ?? fractional.date(from: text) { return date }
+            if let date = formats.date(from: text) { return date }
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not an ISO 8601 date: \(text)"))
         }
         return decoder
     }()
+
+    /// The two formatters, built once instead of per decoded date. ISO8601DateFormatter is thread-safe.
+    private final class DateFormats: @unchecked Sendable {
+        private let plain = ISO8601DateFormatter()
+        private let fractional: ISO8601DateFormatter = {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return formatter
+        }()
+
+        func date(from text: String) -> Date? { plain.date(from: text) ?? fractional.date(from: text) }
+    }
 
     // MARK: - Wire format (snake_case as in the API)
 
@@ -137,10 +153,10 @@ nonisolated struct HevyClient: Sendable {
             var notes: String?
             var exercise_template_id: String
             var superset_id: Double?
-            var sets: [Set]
+            var sets: [ExerciseSet]
         }
 
-        struct Set: Decodable {
+        struct ExerciseSet: Decodable {
             var index: Double?
             var type: String?
             var weight_kg: Double?
@@ -206,12 +222,20 @@ nonisolated enum HevyKeychain {
         return String(data: data, encoding: .utf8)
     }
 
-    static func save(_ key: String) {
-        delete()
-        var item = query
-        item[kSecValueData as String] = Data(key.utf8)
-        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(item as CFDictionary, nil)
+    /// Replaces the stored key. Returns false when the Keychain refused it (the key then isn't kept across launches).
+    @discardableResult
+    static func save(_ key: String) -> Bool {
+        var attributes: [String: Any] = [
+            kSecValueData as String: Data(key.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        // Update in place so a failed write doesn't also lose the previous key.
+        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            attributes.merge(query) { $1 }
+            status = SecItemAdd(attributes as CFDictionary, nil)
+        }
+        return status == errSecSuccess
     }
 
     static func delete() {

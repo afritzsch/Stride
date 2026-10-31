@@ -5,16 +5,18 @@ import Foundation
 nonisolated enum DemoSchedule {
     static let placeName = "Demo city"
 
+    /// `minutes` after midnight on the wall clock, so events keep their hour on days the clocks change.
+    private static func time(_ minutes: Int, on day: Date, calendar: Calendar) -> Date {
+        calendar.date(bySettingHour: minutes / 60, minute: minutes % 60, second: 0, of: day)
+            ?? day.addingTimeInterval(TimeInterval(minutes * 60))
+    }
+
     /// Office hours on weekdays plus a few fixed appointments, for the next `days` days from today.
     static func busy(days: Int = 8, now: Date = .now, calendar: Calendar = .current) -> [BusyInterval] {
         let today = calendar.startOfDay(for: now)
         var events: [BusyInterval] = []
         func add(_ day: Date, _ from: Int, _ to: Int, _ title: String) {
-            events.append(BusyInterval(
-                start: day.addingTimeInterval(TimeInterval(from * 60)),
-                end: day.addingTimeInterval(TimeInterval(to * 60)),
-                title: title
-            ))
+            events.append(BusyInterval(start: time(from, on: day, calendar: calendar), end: time(to, on: day, calendar: calendar), title: title))
         }
         for offset in 0..<days {
             guard let day = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
@@ -50,7 +52,7 @@ nonisolated enum DemoSchedule {
             guard let day = calendar.date(byAdding: .day, value: offset, to: today) else { continue }
             var rng = SeededGenerator(seed: UInt64(day.timeIntervalSince1970 / 86400))
             let dayHigh = Double.random(in: 10...15, using: &rng)
-            sun.append(SunTimes(date: day, sunrise: day.addingTimeInterval(7 * 3600 + 10 * 60), sunset: day.addingTimeInterval(16 * 3600 + 50 * 60)))
+            sun.append(SunTimes(date: day, sunrise: time(7 * 60 + 10, on: day, calendar: calendar), sunset: time(16 * 60 + 50, on: day, calendar: calendar)))
             for hour in 0..<24 {
                 // Coolest around 5:00, warmest around 15:00.
                 let warmth = (1 - cos(Double(hour - 5) / 24 * 2 * .pi)) / 2

@@ -12,6 +12,9 @@ func color(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
     CGColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: alpha)
 }
 
+/// Where the curve ends, marked with a dot.
+let end = CGPoint(x: 850, y: 290)
+
 /// Heartbeat that turns into a rising curve: data becoming progress.
 func strokePath() -> CGPath {
     let p = CGMutablePath()
@@ -20,10 +23,9 @@ func strokePath() -> CGPath {
     p.addLine(to: CGPoint(x: 405, y: 470))
     p.addLine(to: CGPoint(x: 495, y: 745))
     p.addLine(to: CGPoint(x: 580, y: 440))
-    p.addCurve(to: CGPoint(x: 850, y: 290), control1: CGPoint(x: 640, y: 330), control2: CGPoint(x: 740, y: 290))
+    p.addCurve(to: end, control1: CGPoint(x: 640, y: 330), control2: CGPoint(x: 740, y: 290))
     return p
 }
-let end = CGPoint(x: 850, y: 290)
 let lineWidth: CGFloat = 70
 let dotRadius: CGFloat = 62
 
@@ -89,6 +91,11 @@ guard CommandLine.arguments.count > 1 else {
     exit(1)
 }
 let out = CommandLine.arguments[1]
+var isDirectory: ObjCBool = false
+guard FileManager.default.fileExists(atPath: out, isDirectory: &isDirectory), isDirectory.boolValue else {
+    print("not a directory: \(out)")
+    exit(1)
+}
 render(.light, to: "\(out)/AppIcon.png")
 render(.dark, to: "\(out)/AppIcon-Dark.png")
 render(.tinted, to: "\(out)/AppIcon-Tinted.png")

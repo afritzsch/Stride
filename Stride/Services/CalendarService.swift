@@ -65,7 +65,6 @@ final class CalendarService {
         guard let target = calendarID.flatMap(store.calendar(withIdentifier:)) ?? store.defaultCalendarForNewEvents else {
             throw CalendarError.noCalendar
         }
-        if let eventID { try remove(eventID: eventID) }
         let event = EKEvent(eventStore: store)
         event.calendar = target
         event.title = session.session
@@ -74,6 +73,9 @@ final class CalendarService {
         event.url = Self.sessionURL(for: day)
         event.notes = [session.briefDescription, session.details, "Planned in Stride."].filter { !$0.isEmpty }.joined(separator: "\n")
         try store.save(event, span: .thisEvent)
+        // Only after the new event is saved, so a failed save doesn't lose the old one. If the old one can't be
+        // removed, the new session is still in the calendar and is what the caller should track.
+        if let eventID, eventID != event.eventIdentifier { try? remove(eventID: eventID) }
         return BusyInterval(start: start, end: end, title: event.title, sessionDate: Calendar.current.startOfDay(for: day), eventID: event.eventIdentifier)
     }
 
@@ -86,20 +88,27 @@ final class CalendarService {
     static let changed = Notification.Name.EKEventStoreChanged
 
     nonisolated static func sessionURL(for day: Date) -> URL {
-        URL(string: "stride://session/\(dayFormatter().string(from: day))")!
+        let parts = gregorian.dateComponents([.year, .month, .day], from: day)
+        let text = String(format: "%04d-%02d-%02d", parts.year ?? 0, parts.month ?? 0, parts.day ?? 0)
+        return URL(string: "stride://session/\(text)")!
     }
 
+    /// The day in a `stride://session/<yyyy-MM-dd>` URL, at the start of that day; nil for any other URL.
     nonisolated static func sessionDate(from url: URL) -> Date? {
         guard url.scheme == "stride", url.host() == "session" else { return nil }
-        return dayFormatter().date(from: url.lastPathComponent)
+        let parts = url.lastPathComponent.split(separator: "-", omittingEmptySubsequences: false).map { Int($0) }
+        guard parts.count == 3, let year = parts[0], let month = parts[1], let day = parts[2] else { return nil }
+        let calendar = gregorian
+        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: day)),
+              calendar.dateComponents([.year, .month, .day], from: date) == DateComponents(year: year, month: month, day: day)
+        else { return nil }
+        return date
     }
 
-    nonisolated private static func dayFormatter() -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = .current
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
+    /// The URL's dates are Gregorian and in the current time zone whatever calendar the user's locale prefers.
+    nonisolated private static var gregorian: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return calendar
     }
 }
