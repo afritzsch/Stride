@@ -31,6 +31,9 @@ struct ContentView: View {
             await model.refresh()
             model.applyLaunchRoute()
             await model.handleLaunchExport()
+            #if DEBUG
+            await model.handleNotificationHooks()
+            #endif
         }
     }
 }

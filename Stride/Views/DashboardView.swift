@@ -60,6 +60,8 @@ struct DashboardView: View {
                 await model.schedule.refresh()
                 // Before reviews, so a new gym session is reviewed with its exercises.
                 await model.strength.sync()
+                // The athlete sees today's readiness and new workouts here, so they won't notify later.
+                model.checkNotifications()
                 await model.adjustTodayIfNeeded(automatically: true)
                 await model.reviewNewWorkouts()
             }

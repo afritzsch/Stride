@@ -55,6 +55,8 @@ struct SettingsView: View {
 
                 ScheduleSettingsSection()
 
+                NotificationSettingsSection()
+
                 HevySettingsSection()
 
                 Section("Goal") {

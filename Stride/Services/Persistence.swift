@@ -26,6 +26,12 @@ nonisolated enum DefaultsKey {
     static let hevyAccountName = "hevyAccountName"
     static let hevyLastSync = "hevyLastSync"
     static let removedClaudeSettings = "removedClaudeSettings"
+    static let notifyReadiness = "notifyReadiness"
+    static let notifyNewWorkouts = "notifyNewWorkouts"
+    static let notifySessionReminders = "notifySessionReminders"
+    static let sessionReminderMinutes = "sessionReminderMinutes"
+    /// `NotificationLog`: what was notified, so nothing notifies twice.
+    static let notificationLog = "notificationLog"
     /// Set by the earliest versions, which could use Claude; removed on first launch.
     static let legacyEngine = "engine"
 
@@ -38,6 +44,10 @@ nonisolated enum DefaultsKey {
     static let exportFixture = "exportFixture"
     static let probeModel = "probeModel"
     static let demoHevy = "demoHevy"
+    /// `-notify readiness|workout|session|all` posts that notification a few seconds after launch;
+    /// `-notifyOpen readiness|workout|session` handles a tap on it.
+    static let notify = "notify"
+    static let notifyOpen = "notifyOpen"
     /// Write Documents/debug-state.json on a device too (it always is in the Simulator).
     static let debugState = "debugState"
 }

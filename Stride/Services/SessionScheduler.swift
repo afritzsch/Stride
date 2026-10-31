@@ -201,7 +201,7 @@ nonisolated enum SessionScheduler {
     }
 
     /// The worst condition, average temperatures and wind, and highest rain chance over the hours a slot covers.
-    private static func weather(over hours: [HourlyWeather]) -> SlotWeather {
+    static func weather(over hours: [HourlyWeather]) -> SlotWeather {
         func average(_ value: KeyPath<HourlyWeather, Double>) -> Double {
             hours.map { $0[keyPath: value] }.reduce(0, +) / Double(hours.count)
         }
