@@ -124,9 +124,14 @@ extension AppModel {
         return try await health.workoutDetail(for: workout)
     }
 
-    /// Writes everything the app reads to a JSON file for debugging, and returns its location.
-    func exportHealthData() async throws -> URL {
-        let export: HealthFixture
+    /// Where the debug export is written; deleted again when Settings is left and on the next launch.
+    static let healthExportURL = URL.temporaryDirectory.appending(path: "stride-health-export.json")
+
+    /// Writes everything the app reads to a JSON file for debugging, and returns its location. GPS routes show
+    /// where the athlete lives and trains, so they're left out unless `includeRoutes` (splits that come from GPS
+    /// then don't replay).
+    func exportHealthData(includeRoutes: Bool) async throws -> URL {
+        var export: HealthFixture
         if let fixture {
             export = fixture
         } else if let snapshot, snapshot.isDemo {
@@ -134,8 +139,16 @@ extension AppModel {
         } else {
             export = try await health.exportFixture()
         }
-        let url = URL.temporaryDirectory.appending(path: "stride-health-export.json")
-        try HealthFixture.encoder().encode(export).write(to: url, options: .atomic)
+        if !includeRoutes {
+            for index in export.workouts.indices { export.workouts[index].route = nil }
+        }
+        let url = Self.healthExportURL
+        try HealthFixture.encoder().encode(export).write(to: url, options: [.atomic, .completeFileProtection])
         return url
+    }
+
+    /// Removes the debug export, so raw health data doesn't linger in the app's temporary folder.
+    static func deleteHealthExport() {
+        try? FileManager.default.removeItem(at: healthExportURL)
     }
 }

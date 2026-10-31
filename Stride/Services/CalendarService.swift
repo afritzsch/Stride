@@ -47,7 +47,7 @@ final class CalendarService {
                     start: event.startDate,
                     end: event.endDate,
                     title: event.title ?? "",
-                    sessionDate: event.url.flatMap(Self.sessionDate),
+                    sessionDate: Self.isOwnSession(event) ? event.url.flatMap(Self.sessionDate) : nil,
                     eventID: event.eventIdentifier
                 )
             }
@@ -79,9 +79,22 @@ final class CalendarService {
         return BusyInterval(start: start, end: end, title: event.title, sessionDate: Calendar.current.startOfDay(for: day), eventID: event.eventIdentifier)
     }
 
+    /// Removes a session Stride added. Anything else (an invite or someone else's event that happens to carry a
+    /// session URL) is left alone.
     func remove(eventID: String) throws {
-        guard let event = store.event(withIdentifier: eventID) else { return }
+        guard let event = store.event(withIdentifier: eventID), Self.isOwnSession(event) else { return }
         try store.remove(event, span: .thisEvent)
+    }
+
+    /// Whether the event can be one Stride added: a session URL is only trusted on an event in a calendar the
+    /// athlete can edit, with no other participants and no organizer but the athlete. Otherwise anyone who sends an
+    /// invite with such a URL could have Stride move or delete it.
+    private static func isOwnSession(_ event: EKEvent) -> Bool {
+        guard let url = event.url, sessionDate(from: url) != nil, event.calendar?.allowsContentModifications == true,
+              event.calendar?.type != .subscription, event.calendar?.type != .birthday
+        else { return false }
+        if let organizer = event.organizer, !organizer.isCurrentUser { return false }
+        return event.attendees?.allSatisfy(\.isCurrentUser) ?? true
     }
 
     /// Posted when any calendar changes, inside or outside the app.

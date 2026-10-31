@@ -38,6 +38,8 @@ nonisolated enum DefaultsKey {
     static let exportFixture = "exportFixture"
     static let probeModel = "probeModel"
     static let demoHevy = "demoHevy"
+    /// Write Documents/debug-state.json on a device too (it always is in the Simulator).
+    static let debugState = "debugState"
 }
 
 extension UserDefaults {
@@ -68,6 +70,9 @@ nonisolated enum JSONStore {
     static let archive = "history-archive.json"
     static let athletePlan = "athlete-plan.json"
     static let hevyWorkouts = "hevy-workouts.json"
+    /// Copies of data that can be read again (from Apple Health or Hevy). They're kept out of device backups:
+    /// Apple Health itself is only backed up encrypted, and the archive holds years of it.
+    static let refetchable: Set<String> = [archive, hevyWorkouts]
 
     /// nil when the file is missing or unreadable. A file that no longer decodes (e.g. after a model change)
     /// is moved aside first, so the next save doesn't overwrite the user's history.
@@ -93,10 +98,14 @@ nonisolated enum JSONStore {
     static func save(_ value: some Encodable, to file: String) -> Bool {
         do {
             try FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
-            try JSONEncoder().encode(value).write(
-                to: URL.applicationSupportDirectory.appending(path: file),
-                options: [.atomic, .completeFileProtection]
-            )
+            var url = URL.applicationSupportDirectory.appending(path: file)
+            try JSONEncoder().encode(value).write(to: url, options: [.atomic, .completeFileProtection])
+            if refetchable.contains(file) {
+                // Set after every write: an atomic write replaces the file and its attributes.
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try? url.setResourceValues(values)
+            }
             return true
         } catch {
             print("Stride: failed to save \(file): \(error)")

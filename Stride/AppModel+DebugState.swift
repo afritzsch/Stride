@@ -2,9 +2,29 @@ import Foundation
 
 /// The debug state dump (Documents/debug-state.json): what the app computed, so tests can check numbers, not just pixels.
 extension AppModel {
+    private static var debugStateURL: URL { URL.documentsDirectory.appending(path: "debug-state.json") }
+
+    /// Whether the dump is written: always in the Simulator; on a device (a debug build installed from Xcode is what
+    /// runs there day to day) only when launched with `-debugState YES`, since it holds health data and AI prompts.
+    static var writesDebugState: Bool {
+        #if targetEnvironment(simulator)
+        true
+        #else
+        UserDefaults.standard.bool(forKey: DefaultsKey.debugState)
+        #endif
+    }
+
+    /// Deletes a dump left on a device by an earlier version that always wrote it.
+    static func removeUnwantedDebugState() {
+        #if DEBUG
+        if !writesDebugState { try? FileManager.default.removeItem(at: debugStateURL) }
+        #endif
+    }
+
     /// Writes the dump (no-op in release builds). Passing `detail` also makes it the workout the dump describes.
     func writeDebugState(detail: WorkoutDetail? = nil) {
         #if DEBUG
+        guard Self.writesDebugState else { return }
         if let detail { debugDetail = detail }
         var state = debugOverviewState()
         state.merge(debugPlanState()) { $1 }
@@ -31,7 +51,7 @@ extension AppModel {
 
         do {
             let data = try JSONSerialization.data(withJSONObject: state, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: URL.documentsDirectory.appending(path: "debug-state.json"), options: .atomic)
+            try data.write(to: Self.debugStateURL, options: [.atomic, .completeFileProtection])
         } catch {
             print("Stride: couldn't write debug state: \(error)")
         }

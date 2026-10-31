@@ -173,6 +173,11 @@ nonisolated struct HevyClient: Sendable {
         var end_time: Date
         var exercises: [Exercise]
 
+        /// Rounded to a whole number; nil when it doesn't fit an Int (`Int(_:)` would crash on a bad response).
+        private static func int(_ value: Double?) -> Int? {
+            value.flatMap { Int(exactly: $0.rounded()) }
+        }
+
         var session: StrengthSession {
             StrengthSession(
                 id: id,
@@ -182,17 +187,17 @@ nonisolated struct HevyClient: Sendable {
                 end: end_time,
                 exercises: exercises.enumerated().map { position, exercise in
                     StrengthExercise(
-                        index: exercise.index.map { Int($0) } ?? position,
+                        index: Self.int(exercise.index) ?? position,
                         title: exercise.title,
                         templateID: exercise.exercise_template_id,
                         notes: exercise.notes?.nilIfEmpty,
-                        supersetID: exercise.superset_id.map { Int($0) },
+                        supersetID: Self.int(exercise.superset_id),
                         sets: exercise.sets.enumerated().map { setPosition, set in
                             StrengthSet(
-                                index: set.index.map { Int($0) } ?? setPosition,
+                                index: Self.int(set.index) ?? setPosition,
                                 kind: set.type.flatMap(StrengthSet.Kind.init(rawValue:)) ?? .normal,
                                 weightKg: set.weight_kg,
-                                reps: set.reps.map { Int($0.rounded()) },
+                                reps: Self.int(set.reps),
                                 distanceMeters: set.distance_meters,
                                 durationSeconds: set.duration_seconds,
                                 rpe: set.rpe
