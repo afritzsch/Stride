@@ -236,8 +236,8 @@ nonisolated enum Skill: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .endurance: "1 XP per minute of any workout"
         case .power: "1 XP per point of training load (TRIMP), so hard sessions count more"
-        case .strength: "3 XP per minute of strength, HIIT, core or climbing"
-        case .explorer: "10 XP per km on foot, 3 per km cycling, 40 per km swimming"
+        case .strength: "3 XP per minute of strength, HIIT, core, climbing or cross training"
+        case .explorer: "10 XP per km on foot, 3 per km cycling, 40 per km swimming, 5 for other sports"
         case .vitality: "2 XP per 1,000 daily steps, up to 60 a day"
         case .rest: "20 XP per night at your sleep target, 10 within an hour of it"
         case .discipline: "25 XP per training day, +50 for each week you hit your training days"
@@ -323,6 +323,11 @@ nonisolated struct ProgressReport: Sendable {
         var skillXP: [Skill: Double] = [:]
 
         var xp: Double { skillXP.values.reduce(0, +) }
+
+        /// XP for one skill, or for all of them when `skill` is nil.
+        func earned(_ skill: Skill?) -> Double {
+            skill.map { skillXP[$0] ?? 0 } ?? xp
+        }
     }
 
     var days: [Date: Day]
@@ -502,7 +507,7 @@ nonisolated struct ProgressReport: Sendable {
     /// XP a skill earned per period, oldest first.
     func skillBuckets(_ skill: Skill, granularity: ProgressGranularity) -> [(start: Date, value: Double?)] {
         buckets(granularity: granularity, count: nil) { start, end in
-            days.values.filter { $0.date >= start && $0.date < end }.map { $0.skillXP[skill] ?? 0 }.reduce(0, +)
+            days.values.filter { $0.date >= start && $0.date < end }.map { $0.earned(skill) }.reduce(0, +)
         }
     }
 
@@ -538,9 +543,7 @@ nonisolated struct ProgressReport: Sendable {
     /// XP per skill earned in the current period, for "+120 this week" labels.
     func skillXP(_ skill: Skill?, in granularity: ProgressGranularity) -> Double {
         let start = interval(granularity, containing: lastDate).start
-        return days.values.filter { $0.date >= start }.map { day in
-            skill.map { day.skillXP[$0] ?? 0 } ?? day.xp
-        }.reduce(0, +)
+        return days.values.filter { $0.date >= start }.map { $0.earned(skill) }.reduce(0, +)
     }
 
     /// Level (with the fraction toward the next) at the end of every week, oldest first. nil skill = athlete level.
@@ -548,7 +551,7 @@ nonisolated struct ProgressReport: Sendable {
         guard let firstDate else { return [] }
         let base = skill == nil ? LevelProgress.athleteBase : LevelProgress.skillBase
         let xpByWeek = Dictionary(grouping: days.values) { interval(.week, containing: $0.date).start }
-            .mapValues { days in days.map { day in skill.map { day.skillXP[$0] ?? 0 } ?? day.xp }.reduce(0, +) }
+            .mapValues { days in days.map { $0.earned(skill) }.reduce(0, +) }
         var points: [(Date, Double)] = []
         var total = 0.0
         var week = interval(.week, containing: firstDate).start
@@ -631,15 +634,17 @@ nonisolated struct ProgressReport: Sendable {
         }
 
         let weeks = Dictionary(grouping: days.values) { weekStart($0.date) }
-        if let best = weeks.max(by: { $0.value.map(\.distanceKm).reduce(0, +) < $1.value.map(\.distanceKm).reduce(0, +) }) {
-            let total = best.value.map(\.distanceKm).reduce(0, +)
-            if total > 0 { records.append(PersonalRecord(id: "biggestWeek", title: "Biggest week (distance)", value: km(total), date: best.key, systemImage: "map.fill")) }
+        /// The week with the highest total, as (week start, total).
+        func bestWeek(_ key: KeyPath<Day, Double>) -> (Date, Double)? {
+            weeks.map { ($0.key, $0.value.map { $0[keyPath: key] }.reduce(0, +)) }.max { $0.1 < $1.1 }
         }
-        if let best = weeks.max(by: { $0.value.map(\.trainingMinutes).reduce(0, +) < $1.value.map(\.trainingMinutes).reduce(0, +) }) {
-            let total = best.value.map(\.trainingMinutes).reduce(0, +)
-            if total > 0 { records.append(PersonalRecord(id: "busiestWeek", title: "Biggest week (time)", value: hours(total / 60), date: best.key, systemImage: "calendar")) }
+        if let best = bestWeek(\.distanceKm), best.1 > 0 {
+            records.append(PersonalRecord(id: "biggestWeek", title: "Biggest week (distance)", value: km(best.1), date: best.0, systemImage: "map.fill"))
         }
-        if let best = days.values.filter({ $0.steps != nil }).max(by: { $0.steps! < $1.steps! }), let steps = best.steps {
+        if let best = bestWeek(\.trainingMinutes), best.1 > 0 {
+            records.append(PersonalRecord(id: "busiestWeek", title: "Biggest week (time)", value: hours(best.1 / 60), date: best.0, systemImage: "calendar"))
+        }
+        if let best = days.values.max(by: { ($0.steps ?? -1) < ($1.steps ?? -1) }), let steps = best.steps {
             records.append(PersonalRecord(id: "mostSteps", title: "Most steps in a day", value: number(steps), date: best.date, systemImage: "shoeprints.fill"))
         }
         // Weekly averages for recovery markers, so one odd reading doesn't set the record.

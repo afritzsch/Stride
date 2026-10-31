@@ -129,7 +129,7 @@ private struct TodayCard: View {
             }
 
             if !model.todaysWorkouts.isEmpty {
-                Label("Done: " + model.todaysWorkouts.map { "\($0.sport) \(Int($0.durationMinutes.rounded())) min" }.joined(separator: ", "), systemImage: "checkmark.circle.fill")
+                Label("Done: " + model.todaysWorkouts.map(\.sportAndMinutes).joined(separator: ", "), systemImage: "checkmark.circle.fill")
                     .font(.subheadline)
                     .foregroundStyle(.green)
                 ForEach(model.todaysWorkouts) { workout in
@@ -208,7 +208,7 @@ private struct PlannedLine: View {
             Text("\(Text("\(prefix):").foregroundStyle(.secondary)) \(Text(day.isRest ? "Rest" : day.session).bold())")
             Spacer()
             if day.durationMinutes > 0 {
-                Text("\(day.durationMinutes) min" + (day.targetZone > 0 ? " · Z\(day.targetZone)" : ""))
+                Text(day.durationAndZone)
                     .foregroundStyle(.secondary)
             }
         }
@@ -482,16 +482,7 @@ private struct RecentWorkouts: View {
             if workouts.isEmpty {
                 Text("No workouts in the last \(HealthKitService.windowWeeks) weeks.").font(.footnote).foregroundStyle(.secondary)
             }
-            ForEach(workouts) { workout in
-                NavigationLink(value: DashboardDestination.workout(workout)) {
-                    HStack {
-                        WorkoutRow(workout: workout)
-                        LinkChevron()
-                    }
-                }
-                .buttonStyle(.plain)
-                if workout.id != workouts.last?.id { Divider() }
-            }
+            WorkoutLinkRows(workouts: workouts)
         }
     }
 }

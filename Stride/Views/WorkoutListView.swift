@@ -20,6 +20,24 @@ struct WorkoutListView: View {
     }
 }
 
+/// Workout rows that open the workout, with dividers between them, for use inside a card.
+struct WorkoutLinkRows: View {
+    var workouts: [WorkoutSummary]
+
+    var body: some View {
+        ForEach(workouts) { workout in
+            NavigationLink(value: DashboardDestination.workout(workout)) {
+                HStack {
+                    WorkoutRow(workout: workout)
+                    LinkChevron()
+                }
+            }
+            .buttonStyle(.plain)
+            if workout.id != workouts.last?.id { Divider() }
+        }
+    }
+}
+
 struct WorkoutRow: View {
     @Environment(AppModel.self) private var model
     var workout: WorkoutSummary

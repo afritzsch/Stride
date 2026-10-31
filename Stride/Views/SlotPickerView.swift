@@ -25,7 +25,7 @@ struct SlotPickerView: View {
                     Text(error).foregroundStyle(.red)
                 }
             }
-            .navigationTitle(date.formatted(.dateTime.weekday(.wide).day().month()))
+            .navigationTitle(Format.day(date))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

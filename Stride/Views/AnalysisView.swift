@@ -49,7 +49,7 @@ private struct RunAnalysisCard: View {
         Card {
             HStack {
                 Label(modelLabel, systemImage: "apple.intelligence")
-                .font(.subheadline.bold())
+                    .font(.subheadline.bold())
                 Spacer()
                 if let snapshot = model.snapshot {
                     Text("\(snapshot.workouts.count) workouts · \(snapshot.sleep.count) nights")
@@ -119,13 +119,12 @@ struct ReportContent: View {
     var body: some View {
         VStack(spacing: 16) {
             Card {
-                HStack {
-                    StatusBadge(text: report.trainingStatus.title, color: report.trainingStatus.color)
-                    Spacer()
-                    Text("\(analysis.modelName) · \(analysis.createdAt.formatted(.relative(presentation: .named)))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                GeneratedHeader(
+                    status: report.trainingStatus.title,
+                    color: report.trainingStatus.color,
+                    modelName: analysis.modelName,
+                    createdAt: analysis.createdAt
+                )
                 Text(report.headline).font(.title3.bold())
                 Text(report.assessment).font(.subheadline)
             }

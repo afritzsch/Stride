@@ -41,10 +41,8 @@ nonisolated struct Readiness: Sendable {
         if let resting = day?.restingHeartRate, let baseline = ind.restingHR28 {
             // Rounded, so the classification matches the whole number shown.
             let delta = (resting - baseline).rounded()
-            if delta >= 5 {
-                signals.append(Signal(isStrong: true, text: "Resting HR \(num(resting, 0)) bpm, \(num(delta, 0)) above your 4-week average"))
-            } else if delta >= 3 {
-                signals.append(Signal(isStrong: false, text: "Resting HR \(num(resting, 0)) bpm, \(num(delta, 0)) above your 4-week average"))
+            if delta >= 3 {
+                signals.append(Signal(isStrong: delta >= 5, text: "Resting HR \(num(resting, 0)) bpm, \(num(delta, 0)) above your 4-week average"))
             } else {
                 fine.append("resting HR \(num(resting, 0)) bpm")
             }
@@ -52,20 +50,17 @@ nonisolated struct Readiness: Sendable {
         if let hrv = day?.hrvMs, let baseline = ind.hrv28, baseline > 0 {
             // Whole percent, so the classification matches the number shown.
             let ratio = 1 - ((1 - hrv / baseline) * 100).rounded() / 100
-            if ratio <= 0.8 {
-                signals.append(Signal(isStrong: true, text: "HRV \(num(hrv, 0)) ms, \(Int(((1 - ratio) * 100).rounded()))% below your 4-week average"))
-            } else if ratio <= 0.9 {
-                signals.append(Signal(isStrong: false, text: "HRV \(num(hrv, 0)) ms, \(Int(((1 - ratio) * 100).rounded()))% below your 4-week average"))
+            if ratio <= 0.9 {
+                signals.append(Signal(isStrong: ratio <= 0.8, text: "HRV \(num(hrv, 0)) ms, \(Int(((1 - ratio) * 100).rounded()))% below your 4-week average"))
             } else {
                 fine.append("HRV \(num(hrv, 0)) ms")
             }
         }
         if let night = snapshot.sleep.first(where: { $0.date == today }) {
             let short = profile.sleepTargetHours - night.asleepHours
-            if night.asleepHours < 6 || short >= 1.5 {
-                signals.append(Signal(isStrong: true, text: "Slept \(num(night.asleepHours, 1)) h last night (target \(num(profile.sleepTargetHours, 1)) h)"))
-            } else if short >= 0.75 {
-                signals.append(Signal(isStrong: false, text: "Slept \(num(night.asleepHours, 1)) h last night (target \(num(profile.sleepTargetHours, 1)) h)"))
+            let isStrong = night.asleepHours < 6 || short >= 1.5
+            if isStrong || short >= 0.75 {
+                signals.append(Signal(isStrong: isStrong, text: "Slept \(num(night.asleepHours, 1)) h last night (target \(num(profile.sleepTargetHours, 1)) h)"))
             } else {
                 fine.append("\(num(night.asleepHours, 1)) h sleep")
             }

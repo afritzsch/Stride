@@ -116,13 +116,16 @@ nonisolated enum SessionScheduler {
         if let hours = forecast?.hours(overlapping: interval), !hours.isEmpty {
             let chance = hours.map(\.precipitationChance).max() ?? 0
             let millimeters = hours.map(\.precipitationMm).reduce(0, +)
-            let feelsLike = hours.map(\.apparentTemperatureC).reduce(0, +) / Double(hours.count)
-            let wind = hours.map(\.windKph).reduce(0, +) / Double(hours.count)
+            func average(_ value: KeyPath<HourlyWeather, Double>) -> Double {
+                hours.map { $0[keyPath: value] }.reduce(0, +) / Double(hours.count)
+            }
+            let feelsLike = average(\.apparentTemperatureC)
+            let wind = average(\.windKph)
             let uv = hours.map(\.uvIndex).max() ?? 0
             let worst = hours.max { $0.condition.severity < $1.condition.severity }?.condition ?? .cloudy
             slotWeather = SlotWeather(
                 condition: worst,
-                temperatureC: hours.map(\.temperatureC).reduce(0, +) / Double(hours.count),
+                temperatureC: average(\.temperatureC),
                 apparentTemperatureC: feelsLike,
                 precipitationChance: chance,
                 windKph: wind
@@ -177,7 +180,7 @@ nonisolated enum SessionScheduler {
         if habit >= 0.6 { reasons.append("Your usual time") }
 
         // Hard sessions late in the evening push bedtime back.
-        if session.intensity == .hard, calendar.component(.hour, from: end) * 60 + calendar.component(.minute, from: end) > 20 * 60 + 30 {
+        if session.intensity == .hard, minuteOfDay(end, calendar: calendar) > 20 * 60 + 30 {
             penalty += 6
             warnings.append("Late hard session can hurt sleep")
         }
@@ -233,7 +236,11 @@ nonisolated enum SessionScheduler {
     }
 
     static func time(_ date: Date, calendar: Calendar) -> String {
-        clock(calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date))
+        clock(minuteOfDay(date, calendar: calendar))
+    }
+
+    private static func minuteOfDay(_ date: Date, calendar: Calendar) -> Int {
+        calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
     }
 }
 

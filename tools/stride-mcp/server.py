@@ -49,7 +49,7 @@ def simctl(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 def device_udid() -> str:
     """The dedicated test simulator, created on first use so the user's own simulators stay untouched."""
     devices = json.loads(simctl("list", "devices", "-j").stdout)["devices"]
-    for runtime, entries in devices.items():
+    for entries in devices.values():
         for device in entries:
             if device["name"] == DEVICE_NAME and device.get("isAvailable", True):
                 return device["udid"]
@@ -106,11 +106,12 @@ def launch(
 ) -> dict:
     """Install and (re)launch the app on a screen.
 
-    route: dashboard | progress | coach | plan | settings | workouts | workout:<latest|latest-run|index|uuid> |
-        metric:<load|acwr|sleep|restingHR|hrv|steps|weight>
+    route: dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid> |
+        skill:<name> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>
     demo: force demo data on/off (None keeps the app's setting).
     fixture: path on this Mac to a HealthFixture JSON to replay instead of HealthKit; omit to clear.
-    scroll_to: on the first workout opened, scroll to route | heart-rate | zones | splits | review | analysis.
+    scroll_to: on the first workout opened, scroll to route | heart-rate | zones | splits | review | analysis;
+        on progress: trend | compare | records | achievements; on plan: adherence.
     analyze: review the first workout opened (only workout routes support this).
     sheet: on the plan route, open week (week editor), edit:<n> or time:<n> for the day n days from today.
     """

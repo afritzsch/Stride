@@ -24,10 +24,7 @@ struct ProgressOverviewView: View {
                             LevelCard(progress: progress)
                             LevelHistoryCard(progress: progress, skill: nil)
                             SkillsCard(progress: progress)
-                            Picker("Period", selection: $granularity) {
-                                ForEach(ProgressGranularity.allCases) { Text($0.title).tag($0) }
-                            }
-                            .pickerStyle(.segmented)
+                            GranularityPicker(selection: $granularity)
                             TrendCard(progress: progress, granularity: granularity, metric: $metric).id("trend")
                             ComparisonCard(progress: progress, granularity: granularity, selected: $metric).id("compare")
                             RecordsCard(records: progress.records).id("records")
@@ -255,9 +252,9 @@ private struct SkillsCard: View {
                             }
                             ProgressView(value: level.fraction).tint(skill.color)
                         }
-                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary).accessibilityHidden(true)
-                }
-                .contentShape(.rect)
+                        LinkChevron()
+                    }
+                    .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
             }
@@ -278,6 +275,18 @@ private struct SkillsCard: View {
 }
 
 // MARK: - Trend
+
+/// Week, month or year, for the charts that bucket by period.
+struct GranularityPicker: View {
+    @Binding var selection: ProgressGranularity
+
+    var body: some View {
+        Picker("Period", selection: $selection) {
+            ForEach(ProgressGranularity.allCases) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+    }
+}
 
 private struct TrendCard: View {
     var progress: ProgressReport

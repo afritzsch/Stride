@@ -143,11 +143,10 @@ func checkAthletePlan() async {
 
     // A pinned day in the next plan: in the prompt, and kept through a repair that changes it.
     let tomorrow = PlannedDay(day: scenario.label(1), sport: "Running", intensity: .hard, session: "Hill repeats", durationMinutes: 50, targetZone: 4, details: "With the club")
-    let withOwn = scenario
     let athleteDays = [AthletePlanDay(date: scenario.day(1), day: tomorrow, savedAt: .now)]
     let prompt = PromptBuilder(
-        snapshot: withOwn.snapshot, metrics: withOwn.metrics, profile: withOwn.profile, planStart: withOwn.planStart, compact: true,
-        history: withOwn.history, athleteDays: athleteDays, availability: ["\(scenario.label(1)) | 2.0 h free"], calendar: calendar
+        snapshot: scenario.snapshot, metrics: scenario.metrics, profile: scenario.profile, planStart: scenario.planStart, compact: true,
+        history: scenario.history, athleteDays: athleteDays, availability: ["\(scenario.label(1)) | 2.0 h free"], calendar: calendar
     ).prompt
     check(prompt.contains("THE ATHLETE'S OWN PLAN") && prompt.contains("\(scenario.label(1)) | Hill repeats"), "pinned day in the prompt")
     check(prompt.contains("FREE TIME") && prompt.contains("2.0 h free"), "free time in the prompt")

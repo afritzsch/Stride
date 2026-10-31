@@ -116,11 +116,14 @@ final class AppModel {
     init() {
         let defaults = UserDefaults.standard
         profile = defaults.data(forKey: Keys.profile).flatMap { try? JSONDecoder().decode(UserProfile.self, from: $0) } ?? UserProfile()
-        // Default to demo data where HealthKit doesn't exist (e.g. iPad).
         // bool(forKey:) also understands "YES"/"NO" strings, e.g. from launch arguments.
-        useDemoData = defaults.object(forKey: Keys.demo) != nil ? defaults.bool(forKey: Keys.demo) : !HealthKitService.isAvailable
-        allowPrivateCloud = defaults.object(forKey: Keys.privateCloud) != nil ? defaults.bool(forKey: Keys.privateCloud) : true
-        autoReviewWorkouts = defaults.object(forKey: Keys.autoReview) != nil ? defaults.bool(forKey: Keys.autoReview) : true
+        func bool(_ key: String, default value: Bool) -> Bool {
+            defaults.object(forKey: key) != nil ? defaults.bool(forKey: key) : value
+        }
+        // Default to demo data where HealthKit doesn't exist (e.g. iPad).
+        useDemoData = bool(Keys.demo, default: !HealthKitService.isAvailable)
+        allowPrivateCloud = bool(Keys.privateCloud, default: true)
+        autoReviewWorkouts = bool(Keys.autoReview, default: true)
         history = JSONStore.load([SavedAnalysis].self, from: JSONStore.analyses) ?? []
         athleteDays = JSONStore.load([AthletePlanDay].self, from: JSONStore.athletePlan) ?? []
         todayAdjustment = defaults.data(forKey: Keys.todayAdjustment)
@@ -154,14 +157,9 @@ final class AppModel {
             writeDebugState()
             if generation == refreshGeneration { Task { await refreshArchive() } }
         }
-        if let fixture {
-            snapshot = fixture.snapshot
-            needsHealthAuthorization = false
-            recomputeMetrics()
-            return
-        }
-        if useDemoData {
-            snapshot = DemoData.snapshot()
+        // A fixture wins over demo data; both are replayed without asking HealthKit.
+        if let replayed = fixture?.snapshot ?? (useDemoData ? DemoData.snapshot() : nil) {
+            snapshot = replayed
             needsHealthAuthorization = false
             recomputeMetrics()
             return
@@ -413,8 +411,8 @@ final class AppModel {
         ) {
             analysis.effort = measured
         }
-        runAnalyses[detail.summary.id] = SavedRunAnalysis(
-            workoutID: detail.summary.id,
+        runAnalyses[id] = SavedRunAnalysis(
+            workoutID: id,
             createdAt: .now,
             modelName: result.modelName,
             note: note,

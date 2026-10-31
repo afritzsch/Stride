@@ -188,7 +188,7 @@ private struct PlanDayCard: View {
         let calendar = Calendar.current
         if calendar.isDateInToday(date) { return "Today" }
         if calendar.isDateInTomorrow(date) { return "Tomorrow" }
-        return date.formatted(.dateTime.weekday(.wide).day().month())
+        return Format.day(date)
     }
 }
 
@@ -380,7 +380,7 @@ private struct AdherenceList: View {
                         }
                         Text(day.planned.isRest ? "Rest" : "\(day.planned.session), \(day.planned.durationMinutes) min").font(.subheadline)
                         if !day.workouts.isEmpty {
-                            Text("Did: " + day.workouts.map { "\($0.sport) \(Int($0.durationMinutes.rounded())) min" }.joined(separator: ", "))
+                            Text("Did: " + day.workouts.map(\.sportAndMinutes).joined(separator: ", "))
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }

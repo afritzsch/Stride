@@ -59,8 +59,6 @@ final class CalendarService {
         store.calendars(for: .event).filter(\.allowsContentModifications).sorted { $0.title < $1.title }
     }
 
-    var defaultCalendarID: String? { store.defaultCalendarForNewEvents?.calendarIdentifier }
-
     /// Adds a session, replacing the event Stride added for the same day before (so moving it doesn't duplicate it).
     func add(session: PlannedDay, start: Date, end: Date, day: Date, calendarID: String?, replacing eventID: String?) throws -> BusyInterval {
         guard Self.access == .granted else { throw CalendarError.noAccess }

@@ -232,8 +232,8 @@ nonisolated struct HealthKitService: Sendable {
         let workouts = try await descriptor.result(for: store)
 
         var summaries: [WorkoutSummary] = []
+        let distanceTypes: [HKQuantityTypeIdentifier] = [.distanceWalkingRunning, .distanceCycling, .distanceSwimming]
         for workout in workouts {
-            let distanceTypes: [HKQuantityTypeIdentifier] = [.distanceWalkingRunning, .distanceCycling, .distanceSwimming]
             // Workouts saved with HealthKit's older API only carry totals, which statistics(for:) may not report.
             // `totalDistance`/`totalEnergyBurned` are deprecated, so read them by key to keep the fallback warning-free.
             let distance = distanceTypes
