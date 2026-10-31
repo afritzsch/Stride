@@ -52,6 +52,10 @@ struct PlanView: View {
                         WeatherAttributionView()
                     }
                     .padding()
+                    // Pins the content to the screen width. Wrapping text (the adherence card's header, at larger
+                    // text sizes others too) can measure a fraction of a point wider, and the scroll view then
+                    // pans sideways as well as up and down.
+                    .containerRelativeFrame(.horizontal)
                 }
                 .task {
                     #if DEBUG
