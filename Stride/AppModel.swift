@@ -398,12 +398,14 @@ final class AppModel {
         defer { runPreviews[id] = nil }
         let result = try await generate(
             RunAnalysis.self,
-            instructions: RunPromptBuilder.instructions,
+            instructions: RunPromptBuilder.instructions(for: detail.summary.kind),
             fullPrompt: prompt(compact: false),
             compactPrompt: prompt(compact: true)
         ) { [weak self] partial in self?.runPreviews[id] = partial }
         var analysis = result.output
-        if let measured = EffortLevel.measured(
+        if detail.summary.kind == .strength {
+            analysis.effort = nil
+        } else if let measured = EffortLevel.measured(
             zoneSeconds: detail.zoneSeconds(zones: metrics.heartRateZones),
             durationMinutes: detail.summary.durationMinutes
         ) {

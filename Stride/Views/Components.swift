@@ -131,14 +131,17 @@ struct StatusBadge: View {
 
 /// A status badge and which model wrote it when, the top line of a saved analysis or workout review.
 struct GeneratedHeader: View {
-    var status: String
+    /// Nil leaves out the badge (strength reviews have no effort).
+    var status: String?
     var color: Color
     var modelName: String
     var createdAt: Date
 
     var body: some View {
         HStack {
-            StatusBadge(text: status, color: color)
+            if let status {
+                StatusBadge(text: status, color: color)
+            }
             Spacer()
             Text("\(modelName) · \(createdAt.formatted(.relative(presentation: .named)))")
                 .font(.caption)

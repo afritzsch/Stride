@@ -318,8 +318,18 @@ nonisolated struct WorkoutDetail: Sendable {
     }
 }
 
+/// Which coach reviews a workout. Heart-rate zones and pace say how hard endurance work was; they say little
+/// about lifting, where heart rate stays low and the watch records no sets, reps or weights.
+nonisolated enum WorkoutKind: Sendable {
+    case endurance, strength
+}
+
 nonisolated extension WorkoutSummary {
     var isFootSport: Bool { ["Running", "Walking", "Hiking"].contains(sport) }
+
+    static let strengthSports: Set<String> = ["Strength", "Core", "Climbing", "Pilates", "Yoga", "Mobility"]
+
+    var kind: WorkoutKind { Self.strengthSports.contains(sport) ? .strength : .endurance }
 
     /// Average pace over moving time (HealthKit's workout duration excludes pauses).
     var paceSecondsPerKm: Double? {

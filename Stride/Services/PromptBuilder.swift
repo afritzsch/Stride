@@ -213,7 +213,8 @@ nonisolated struct PromptBuilder {
                 lines.append([
                     Self.dayLabel(workout.start, calendar: calendar),
                     workout.sport,
-                    review.analysis.effort.rawValue,
+                    // Strength reviews saved before they stopped getting an effort carry a meaningless one.
+                    (workout.kind == .strength ? nil : review.analysis.effort)?.rawValue ?? "–",
                     review.analysis.headline,
                     Self.quote(review.note),
                 ].joined(separator: " | "))
