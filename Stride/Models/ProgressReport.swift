@@ -239,16 +239,23 @@ nonisolated struct ProgressReport: Sendable {
 
     /// The current period so far against the same stretch of the previous one (e.g. Mon–Wed vs last Mon–Wed).
     func comparison(_ metric: ProgressMetric, granularity: ProgressGranularity) -> PeriodComparison {
+        comparisons([metric], granularity: granularity)[0]
+    }
+
+    /// `comparison` for several metrics (all by default); the period boundaries are worked out once.
+    func comparisons(_ metrics: [ProgressMetric] = ProgressMetric.allCases, granularity: ProgressGranularity) -> [PeriodComparison] {
         let current = interval(granularity, containing: lastDate)
         let end = calendar.date(byAdding: .day, value: 1, to: lastDate) ?? lastDate
         let elapsed = calendar.dateComponents([.day], from: current.start, to: end).day ?? 1
         let previousStart = calendar.date(byAdding: granularity.component, value: -1, to: current.start) ?? current.start
         let previousEnd = min(calendar.date(byAdding: .day, value: elapsed, to: previousStart) ?? current.start, current.start)
-        return PeriodComparison(
-            metric: metric,
-            current: value(metric, from: current.start, to: end),
-            previous: value(metric, from: previousStart, to: previousEnd)
-        )
+        return metrics.map { metric in
+            PeriodComparison(
+                metric: metric,
+                current: value(metric, from: current.start, to: end),
+                previous: value(metric, from: previousStart, to: previousEnd)
+            )
+        }
     }
 
     /// XP per skill earned in the current period, for "+120 this week" labels.

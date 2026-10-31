@@ -48,7 +48,7 @@ nonisolated struct StrengthReport: Sendable {
         var date: Date { session?.start ?? workout?.start ?? .distantPast }
         var title: String {
             if let title = session?.title, !title.isEmpty { return title }
-            return workout?.sport ?? "Strength"
+            return workout?.sport ?? Sport.strength
         }
         var minutes: Double { workout?.durationMinutes ?? session?.durationMinutes ?? 0 }
         var id: String { session?.id ?? workout?.id.uuidString ?? "" }

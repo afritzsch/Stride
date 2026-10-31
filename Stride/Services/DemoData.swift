@@ -48,12 +48,12 @@ nonisolated enum DemoData {
             }
 
             let plan: Session? = switch weekday {
-            case 3: Session(sport: "Running", minutes: 50, heartRate: 162, kmPerMinute: 0.19)        // Tue intervals
-            case 5: Session(sport: "Running", minutes: 45, heartRate: 155, kmPerMinute: 0.18)        // Thu tempo
-            case 7: Session(sport: "Running", minutes: ramp ? 110 : 85, heartRate: 146, kmPerMinute: 0.165) // Sat long run
-            case 1: Session(sport: "Cycling", minutes: 60, heartRate: 128, kmPerMinute: 0.45)        // Sun easy ride
-            case 2: Session(sport: "Strength", minutes: 40, heartRate: 112, kmPerMinute: 0)          // Mon gym
-            case 4 where ramp: Session(sport: "Running", minutes: 40, heartRate: 150, kmPerMinute: 0.17)
+            case 3: Session(sport: Sport.running, minutes: 50, heartRate: 162, kmPerMinute: 0.19)        // Tue intervals
+            case 5: Session(sport: Sport.running, minutes: 45, heartRate: 155, kmPerMinute: 0.18)        // Thu tempo
+            case 7: Session(sport: Sport.running, minutes: ramp ? 110 : 85, heartRate: 146, kmPerMinute: 0.165) // Sat long run
+            case 1: Session(sport: Sport.cycling, minutes: 60, heartRate: 128, kmPerMinute: 0.45)        // Sun easy ride
+            case 2: Session(sport: Sport.strength, minutes: 40, heartRate: 112, kmPerMinute: 0)          // Mon gym
+            case 4 where ramp: Session(sport: Sport.running, minutes: 40, heartRate: 150, kmPerMinute: 0.17)
             default: nil
             }
             if let plan, offset > 0, let start = calendar.date(bySettingHour: workoutHour, minute: 0, second: 0, of: day) {
@@ -107,13 +107,13 @@ nonisolated extension DemoData {
             let pace = 0.15 + 0.03 * fitness // km per minute
             // More sessions as fitness grows.
             let plan: Session? = switch weekday {
-            case 3: Session(sport: "Running", minutes: 35 + 15 * fitness, heartRate: 158, kmPerMinute: pace + 0.01)
-            case 5 where fitness > 0.3: Session(sport: "Running", minutes: 40, heartRate: 152, kmPerMinute: pace)
+            case 3: Session(sport: Sport.running, minutes: 35 + 15 * fitness, heartRate: 158, kmPerMinute: pace + 0.01)
+            case 5 where fitness > 0.3: Session(sport: Sport.running, minutes: 40, heartRate: 152, kmPerMinute: pace)
             case 7 where (148..<155).contains(daysLeft): // half marathon race
-                Session(sport: "Running", minutes: 21.2 / (pace + 0.005), heartRate: 165, kmPerMinute: pace + 0.005)
-            case 7: Session(sport: "Running", minutes: 50 + 35 * fitness, heartRate: 145, kmPerMinute: pace - 0.01)
-            case 1 where fitness > 0.15: Session(sport: "Cycling", minutes: 45 + 15 * fitness, heartRate: 126, kmPerMinute: 0.42)
-            case 2 where fitness > 0.5: Session(sport: "Strength", minutes: 35, heartRate: 110, kmPerMinute: 0)
+                Session(sport: Sport.running, minutes: 21.2 / (pace + 0.005), heartRate: 165, kmPerMinute: pace + 0.005)
+            case 7: Session(sport: Sport.running, minutes: 50 + 35 * fitness, heartRate: 145, kmPerMinute: pace - 0.01)
+            case 1 where fitness > 0.15: Session(sport: Sport.cycling, minutes: 45 + 15 * fitness, heartRate: 126, kmPerMinute: 0.42)
+            case 2 where fitness > 0.5: Session(sport: Sport.strength, minutes: 35, heartRate: 110, kmPerMinute: 0)
             default: nil
             }
             // Skip about one session in eight, like real life.
@@ -204,8 +204,8 @@ nonisolated extension DemoData {
             distance = distance.map { RawSample(start: $0.start, end: $0.end, value: $0.value * scale, source: $0.source) }
         }
 
-        let isRun = workout.sport == "Running"
-        let hasRoute = workout.isFootSport || workout.sport == "Cycling"
+        let isRun = workout.sport == Sport.running
+        let hasRoute = workout.isFootSport || workout.sport == Sport.cycling
         return RawWorkoutData(
             workoutID: workout.id,
             start: workout.start,
@@ -217,9 +217,9 @@ nonisolated extension DemoData {
             elevationGainM: workout.isFootSport ? Double.random(in: 25...140, using: &rng).rounded() : nil,
             temperatureC: 11,
             humidityPercent: 72,
-            isIndoor: workout.sport == "Strength",
+            isIndoor: workout.sport == Sport.strength,
             powerW: isRun ? Double.random(in: 240...290, using: &rng) : nil,
-            cyclingCadence: workout.sport == "Cycling" ? 86 : nil,
+            cyclingCadence: workout.sport == Sport.cycling ? 86 : nil,
             route: hasRoute ? route(for: workout, distance: distance, rng: &rng) : []
         )
     }

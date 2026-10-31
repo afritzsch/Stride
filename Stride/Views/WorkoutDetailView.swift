@@ -30,7 +30,7 @@ struct WorkoutDetailView: View {
                         }
                         if !detail.route.isEmpty {
                             RouteMap(route: detail.route, zones: zones, heartRate: detail.heartRate).id("route")
-                        } else if detail.isIndoor != true, workout.isFootSport || workout.sport == "Cycling" {
+                        } else if detail.isIndoor != true, workout.isFootSport || workout.sport == Sport.cycling {
                             Card {
                                 Label("No GPS route was shared to Apple Health for this workout.", systemImage: "map")
                                     .font(.footnote)

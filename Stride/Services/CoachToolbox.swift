@@ -117,7 +117,7 @@ final class CoachToolbox {
         var lines = ["WEEKLY (week starting | sessions | minutes | km | load | run km | run pace /km | run avg HR | RHR | HRV)"]
         for week in metrics.weeks.suffix(8) {
             let end = calendar.date(byAdding: .day, value: 7, to: week.weekStart) ?? week.weekStart
-            let runs = snapshot.workouts.filter { $0.sport == "Running" && $0.start >= week.weekStart && $0.start < end }
+            let runs = snapshot.workouts.filter { $0.sport == Sport.running && $0.start >= week.weekStart && $0.start < end }
             let measured = runs.filter { ($0.distanceKm ?? 0) > 0 }
             let runKm = measured.compactMap(\.distanceKm).reduce(0, +)
             let pace = runKm > 0 ? measured.map(\.durationMinutes).reduce(0, +) * 60 / runKm : nil

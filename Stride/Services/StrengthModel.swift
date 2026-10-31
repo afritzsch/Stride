@@ -26,6 +26,7 @@ final class StrengthModel {
 
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var demoCache: (fetchedAt: Date, sessions: [StrengthSession])?
+    @ObservationIgnored private var syncTask: Task<Void, Never>?
 
     /// How far back the first sync reads (a page has 10 workouts).
     private static let historyDays = 365
@@ -96,6 +97,7 @@ final class StrengthModel {
     }
 
     func disconnect() {
+        syncTask?.cancel()
         HevyKeychain.delete()
         isConnected = false
         accountName = nil
@@ -109,26 +111,47 @@ final class StrengthModel {
     // MARK: - Syncing
 
     /// Reads new and changed workouts: a year of history the first time, then only changes since the last sync.
+    /// A forced sync (new key, pull to refresh) replaces one that's running, which may be reading with an old key;
+    /// an ordinary one gives way to it.
     func sync(force: Bool = false) async {
-        guard isConnected, !isSyncing, let key = HevyKeychain.load() else { return }
+        guard isConnected, let key = HevyKeychain.load() else { return }
+        while isSyncing {
+            guard force else { return }
+            syncTask?.cancel()
+            await syncTask?.value
+        }
         if !force, let lastSync, Date.now.timeIntervalSince(lastSync) < Self.minSyncInterval { return }
         isSyncing = true
         syncError = nil
+        let task = Task { await read(with: key) }
+        syncTask = task
+        await task.value
+    }
+
+    /// One sync run. It throws away its result when cancelled, so a replaced or disconnected run never writes.
+    private func read(with key: String) async {
         defer { isSyncing = false }
         let client = HevyClient(apiKey: key)
         let started = Date.now
         do {
+            let fresh: [StrengthSession]
             if let lastSync, !logged.isEmpty {
-                try await applyChanges(client: client, since: lastSync.addingTimeInterval(-60))
+                fresh = try await applyChanges(to: logged, client: client, since: lastSync.addingTimeInterval(-60))
             } else {
-                logged = try await readHistory(client: client)
+                fresh = try await readHistory(client: client)
             }
+            try Task.checkCancellation()
             guard isConnected else { return }
+            logged = fresh
             if !JSONStore.save(logged, to: JSONStore.hevyWorkouts) {
                 model?.debugLog("Couldn't cache the Hevy workouts; they'll be read again next launch.")
             }
             setLastSync(started)
             model?.debugLog("Hevy sync: \(logged.count) workouts")
+        } catch is CancellationError {
+            return
+        } catch let error as URLError where error.code == .cancelled {
+            return
         } catch {
             syncError = error.localizedDescription
             model?.debugLog("Hevy sync failed: \(error)")
@@ -149,8 +172,8 @@ final class StrengthModel {
         return sessions.filter { $0.start >= cutoff }.sorted { $0.start < $1.start }
     }
 
-    private func applyChanges(client: HevyClient, since: Date) async throws {
-        var byID = Dictionary(logged.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
+    private func applyChanges(to sessions: [StrengthSession], client: HevyClient, since: Date) async throws -> [StrengthSession] {
+        var byID = Dictionary(sessions.map { ($0.id, $0) }, uniquingKeysWith: { $1 })
         var page = 1
         while page <= Self.maxPages {
             let result = try await client.events(since: since, page: page)
@@ -163,7 +186,7 @@ final class StrengthModel {
             if result.events.isEmpty || page >= result.pageCount { break }
             page += 1
         }
-        logged = byID.values.sorted { $0.start < $1.start }
+        return byID.values.sorted { $0.start < $1.start }
     }
 
     private func setLastSync(_ date: Date?) {

@@ -407,15 +407,15 @@ nonisolated enum HealthWriteError: LocalizedError {
 nonisolated extension HKWorkoutActivityType {
     var displayName: String {
         switch self {
-        case .running: "Running"
-        case .walking: "Walking"
-        case .hiking: "Hiking"
-        case .cycling: "Cycling"
-        case .swimming: "Swimming"
+        case .running: Sport.running
+        case .walking: Sport.walking
+        case .hiking: Sport.hiking
+        case .cycling: Sport.cycling
+        case .swimming: Sport.swimming
         case .rowing: "Rowing"
         case .elliptical: "Elliptical"
         case .stairClimbing: "Stair climbing"
-        case .traditionalStrengthTraining, .functionalStrengthTraining: "Strength"
+        case .traditionalStrengthTraining, .functionalStrengthTraining: Sport.strength
         case .highIntensityIntervalTraining: "HIIT"
         case .crossTraining: "Cross training"
         case .yoga: "Yoga"

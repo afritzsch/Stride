@@ -96,7 +96,7 @@ extension AppModel {
         let newestFirst = workoutsNewestFirst
         switch selector {
         case "latest": return newestFirst.first
-        case "latest-run": return newestFirst.first { $0.sport == "Running" }
+        case "latest-run": return newestFirst.first { $0.sport == Sport.running }
         case "latest-strength": return newestFirst.first { $0.kind == .strength }
         default:
             if let index = Int(selector), newestFirst.indices.contains(index) { return newestFirst[index] }

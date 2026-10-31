@@ -188,8 +188,8 @@ struct ComparisonCard: View {
             Text("So far, against the same days of \(granularity.previousTitle). Tap a row to chart it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            DividedForEach(data: ProgressMetric.allCases) { metric in
-                let comparison = progress.comparison(metric, granularity: granularity)
+            DividedForEach(data: progress.comparisons(granularity: granularity)) { comparison in
+                let metric = comparison.metric
                 Button {
                     selected = metric
                 } label: {
