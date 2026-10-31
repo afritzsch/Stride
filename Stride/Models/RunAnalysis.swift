@@ -6,12 +6,17 @@ nonisolated enum EffortLevel: String, Codable, CaseIterable, Sendable {
     case recovery, easy, moderate, hard, maximal
 }
 
-extension EffortLevel {
+nonisolated extension EffortLevel {
+    /// Heart rate has to cover at least this share of the session, and this many seconds, to judge effort from it.
+    static let minCoverageShare = 0.5
+    static let minCoverageSeconds = 600.0
+
     /// Effort judged from time in the athlete's own heart-rate zones (Z1…Z5), so the label doesn't depend on
     /// the model reading the numbers right. Nil when heart rate covers too little of the session to tell.
-    nonisolated static func measured(zoneSeconds: [Double], durationMinutes: Double) -> EffortLevel? {
+    static func measured(zoneSeconds: [Double], durationMinutes: Double) -> EffortLevel? {
         let total = zoneSeconds.reduce(0, +)
-        guard zoneSeconds.count == 5, total >= max(600, durationMinutes * 60 * 0.5) else { return nil }
+        guard zoneSeconds.count == HeartRateZones.zoneCount,
+              total >= max(minCoverageSeconds, durationMinutes * 60 * minCoverageShare) else { return nil }
         let share = zoneSeconds.map { $0 / total }
         let z5 = share[4], z45 = share[3] + share[4], z345 = share[2] + z45
         if z5 >= 0.3 || z45 >= 0.8 { return .maximal }
@@ -45,13 +50,13 @@ nonisolated struct RunAnalysis: Codable, Hashable, Sendable {
     var nextSession: String
 }
 
-extension RunAnalysis {
+nonisolated extension RunAnalysis {
     private enum CodingKeys: String, CodingKey {
         case effort, headline, summary, planComparison, highlights, improvements, recovery, nextSession
     }
 
     // Reviews saved before the summary became bullet points stored it as one string.
-    nonisolated init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         effort = try container.decodeIfPresent(EffortLevel.self, forKey: .effort)
         headline = try container.decode(String.self, forKey: .headline)

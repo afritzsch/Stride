@@ -6,6 +6,19 @@ import Foundation
 nonisolated struct RaceForecast: Sendable {
     static let distances: [(name: String, km: Double)] = [("5K", 5), ("10K", 10), ("Half marathon", 21.0975), ("Marathon", 42.195)]
 
+    /// Riegel's fatigue exponent.
+    static let riegelExponent = 1.06
+    /// A run counts as "the race distance" within this share of it.
+    static let sameDistanceTolerance = 0.05
+    /// Only runs from this many days back, and at least this long, say anything about current fitness.
+    static let lookbackDays = 56
+    static let minRunKm = 3.0
+    /// The projected improvement is capped at this share of the current time.
+    static let maxGain = 0.08
+    static let daysPerMonth = 30.4
+    /// Below this many seconds between the fast and slow estimate, a single time is quoted.
+    static let minRangeSeconds = 30.0
+
     var distanceName: String
     var distanceKm: Double
     var raceDate: Date
@@ -21,23 +34,23 @@ nonisolated struct RaceForecast: Sendable {
 
     /// Riegel: T2 = T1 · (D2 / D1)^1.06.
     static func equivalent(seconds: Double, km: Double, toKm target: Double) -> Double {
-        seconds * pow(target / km, 1.06)
+        seconds * pow(target / km, riegelExponent)
     }
 
     /// Within 5%, so a watch's 21.3 km counts as a half marathon.
     static func isSameDistance(_ km: Double?, _ target: Double) -> Bool {
         guard let km else { return false }
-        return abs(km - target) / target <= 0.05
+        return abs(km - target) / target <= sameDistanceTolerance
     }
 
     static func make(
         distanceKm: Double, raceDate: Date, workouts: [WorkoutSummary], experience: ExperienceLevel,
         now: Date = .now, calendar: Calendar = .current
     ) -> RaceForecast? {
-        let since = calendar.date(byAdding: .day, value: -56, to: now) ?? now
+        let since = calendar.date(byAdding: .day, value: -lookbackDays, to: now) ?? now
         let runs = workouts.filter { workout in
             let km: Double = workout.distanceKm ?? 0
-            return workout.sport == "Running" && workout.start >= since && km >= 3 && workout.durationMinutes > 0
+            return workout.sport == Sport.running && workout.start >= since && km >= minRunKm && workout.durationMinutes > 0
         }
         // Extrapolating a short run to a much longer race is too optimistic, so prefer runs of at least half the distance.
         let long = runs.filter { ($0.distanceKm ?? 0) >= distanceKm / 2 }
@@ -53,7 +66,7 @@ nonisolated struct RaceForecast: Sendable {
         case .intermediate: 0.01
         case .advanced: 0.005
         }
-        let gain = min(monthlyGain * Double(days) / 30.4, 0.08)
+        let gain = min(monthlyGain * Double(days) / daysPerMonth, maxGain)
         let sameDistance = runs.filter { isSameDistance($0.distanceKm, distanceKm) }.max(by: { $0.start < $1.start })
         guard let name = distances.min(by: { abs($0.km - distanceKm) < abs($1.km - distanceKm) })?.name else { return nil }
         return RaceForecast(
@@ -77,7 +90,7 @@ nonisolated struct RaceForecast: Sendable {
         if let sameDistance, sameDistance.id != basis.id { lines.append("- Recent run at this distance: \(run(sameDistance))") }
         let converted = Self.isSameDistance(basis.distanceKm, distanceKm) ? "" : ", converted with Riegel's formula"
         lines.append("- Current fitness: \(time(currentSeconds)), from \(run(basis))\(converted)")
-        lines.append(fastSeconds < slowSeconds - 30
+        lines.append(fastSeconds < slowSeconds - Self.minRangeSeconds
             ? "- Projected race time: \(time(fastSeconds))–\(time(slowSeconds)). Fast end: consistent training (about \(PromptBuilder.num(monthlyGain * 100, 1))% faster a month, typical at this level); slow end: no gain."
             : "- Projected race time: about \(time(slowSeconds)).")
         lines.append("Training runs are rarely all-out, so a real race may be a little faster. Quote these times exactly; don't calculate other times.")

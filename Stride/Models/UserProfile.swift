@@ -33,7 +33,7 @@ nonisolated enum ExperienceLevel: String, Codable, CaseIterable, Identifiable, S
 
 /// Context the AI needs that the watch can't know: goals, availability, constraints.
 nonisolated struct UserProfile: Codable, Equatable, Sendable {
-    var primarySport = "Running"
+    var primarySport = Sport.running
     var experience = ExperienceLevel.intermediate
     var age: Int?
     /// Leave nil to estimate from age.
@@ -56,11 +56,14 @@ nonisolated struct UserProfile: Codable, Equatable, Sendable {
     var notes = ""
     var focusAreas = Set(FocusArea.allCases)
 
+    /// Max HR assumed when neither a value nor an age is known.
+    static let defaultMaxHeartRate = 190.0
+
     /// Tanaka formula when age is known, otherwise a conservative default.
     var effectiveMaxHeartRate: Double {
         if let maxHeartRate { return Double(maxHeartRate) }
         if let age { return 208 - 0.7 * Double(age) }
-        return 190
+        return Self.defaultMaxHeartRate
     }
 
     var isMaxHeartRateEstimated: Bool { maxHeartRate == nil }
@@ -72,15 +75,15 @@ nonisolated struct UserProfile: Codable, Equatable, Sendable {
 
     func heartRateZones(restingHR: Double) -> HeartRateZones {
         let maxHR = effectiveMaxHeartRate
-        let shares = [0.6, 0.7, 0.8, 0.9]
+        let shares = HeartRateZones.floorShares
         switch zoneMethod {
         case .custom where hasValidCustomZones:
             return HeartRateZones(floors: customZoneFloors.map(Double.init), method: zoneMethod)
         case .heartRateReserve where maxHR > restingHR:
             let bpm = { restingHR + $0 * (maxHR - restingHR) }
-            return HeartRateZones(floors: shares.map(bpm), method: zoneMethod, zone1Floor: bpm(0.5))
+            return HeartRateZones(floors: shares.map(bpm), method: zoneMethod, zone1Floor: bpm(HeartRateZones.zone1Share))
         default:
-            return HeartRateZones(floors: shares.map { $0 * maxHR }, method: .maxHeartRate, zone1Floor: 0.5 * maxHR)
+            return HeartRateZones(floors: shares.map { $0 * maxHR }, method: .maxHeartRate, zone1Floor: HeartRateZones.zone1Share * maxHR)
         }
     }
 }
@@ -89,27 +92,24 @@ nonisolated extension UserProfile {
     /// Decodes field by field so a profile saved by an older version keeps its values when fields are added.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
-            try container.decodeIfPresent(T.self, forKey: key) ?? fallback
-        }
         let defaults = UserProfile()
-        primarySport = try value(.primarySport, defaults.primarySport)
-        experience = try value(.experience, defaults.experience)
+        primarySport = try container.decode(.primarySport, default: defaults.primarySport)
+        experience = try container.decode(.experience, default: defaults.experience)
         age = try container.decodeIfPresent(Int.self, forKey: .age)
         maxHeartRate = try container.decodeIfPresent(Int.self, forKey: .maxHeartRate)
-        zoneMethod = try value(.zoneMethod, defaults.zoneMethod)
-        customZoneFloors = try value(.customZoneFloors, defaults.customZoneFloors)
-        garminZoneFloors = try value(.garminZoneFloors, defaults.garminZoneFloors)
-        trainingDaysPerWeek = try value(.trainingDaysPerWeek, defaults.trainingDaysPerWeek)
-        weeklyHoursAvailable = try value(.weeklyHoursAvailable, defaults.weeklyHoursAvailable)
-        hasGoal = try value(.hasGoal, defaults.hasGoal)
-        goalName = try value(.goalName, defaults.goalName)
-        goalDate = try value(.goalDate, defaults.goalDate)
-        goalTarget = try value(.goalTarget, defaults.goalTarget)
-        sleepTargetHours = try value(.sleepTargetHours, defaults.sleepTargetHours)
-        dailyStepTarget = try value(.dailyStepTarget, defaults.dailyStepTarget)
-        notes = try value(.notes, defaults.notes)
-        focusAreas = try value(.focusAreas, defaults.focusAreas)
+        zoneMethod = try container.decode(.zoneMethod, default: defaults.zoneMethod)
+        customZoneFloors = try container.decode(.customZoneFloors, default: defaults.customZoneFloors)
+        garminZoneFloors = try container.decode(.garminZoneFloors, default: defaults.garminZoneFloors)
+        trainingDaysPerWeek = try container.decode(.trainingDaysPerWeek, default: defaults.trainingDaysPerWeek)
+        weeklyHoursAvailable = try container.decode(.weeklyHoursAvailable, default: defaults.weeklyHoursAvailable)
+        hasGoal = try container.decode(.hasGoal, default: defaults.hasGoal)
+        goalName = try container.decode(.goalName, default: defaults.goalName)
+        goalDate = try container.decode(.goalDate, default: defaults.goalDate)
+        goalTarget = try container.decode(.goalTarget, default: defaults.goalTarget)
+        sleepTargetHours = try container.decode(.sleepTargetHours, default: defaults.sleepTargetHours)
+        dailyStepTarget = try container.decode(.dailyStepTarget, default: defaults.dailyStepTarget)
+        notes = try container.decode(.notes, default: defaults.notes)
+        focusAreas = try container.decode(.focusAreas, default: defaults.focusAreas)
     }
 }
 
@@ -130,6 +130,12 @@ nonisolated enum HeartRateZoneMethod: String, Codable, CaseIterable, Identifiabl
 
 /// Five heart-rate zones, given as the bpm where zones 2–5 start. Zone 1 is everything below zone 2.
 nonisolated struct HeartRateZones: Equatable, Sendable {
+    static let zoneCount = 5
+    /// Where zones 2–5 start, as a share of max HR (or of HR reserve).
+    static let floorShares = [0.6, 0.7, 0.8, 0.9]
+    /// Where zone 1 starts, which Garmin asks for.
+    static let zone1Share = 0.5
+
     var floors: [Double]
     var method: HeartRateZoneMethod
     /// Where zone 1 starts (50%), which Garmin asks for. Unknown for custom zones.
@@ -145,7 +151,7 @@ nonisolated struct HeartRateZones: Equatable, Sendable {
     /// "<117", "117–135", …, "≥175", in bpm.
     var ranges: [String] {
         let bounds = roundedFloors
-        return (0...4).map { zone in
+        return (0..<Self.zoneCount).map { zone in
             switch zone {
             case 0: "<\(bounds[0])"
             case 4: "≥\(bounds[3])"

@@ -17,7 +17,7 @@ nonisolated enum PlanCheck {
                 day.durationMinutes = 0
                 day.targetZone = 0
             }
-            day.targetZone = min(max(day.targetZone, 0), 5)
+            day.targetZone = min(max(day.targetZone, 0), HeartRateZones.zoneCount)
             return day
         }
     }

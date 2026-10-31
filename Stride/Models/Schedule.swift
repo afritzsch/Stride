@@ -82,6 +82,9 @@ nonisolated enum SkyCondition: String, Codable, Sendable {
 
 /// One hour of forecast, starting at `date`.
 nonisolated struct HourlyWeather: Codable, Hashable, Sendable {
+    /// Seconds each entry covers.
+    static let length: TimeInterval = 3600
+
     var date: Date
     var temperatureC: Double
     var apparentTemperatureC: Double
@@ -124,7 +127,7 @@ nonisolated struct WeatherForecast: Codable, Sendable {
 
     /// Hours that overlap the interval.
     func hours(overlapping interval: DateInterval) -> [HourlyWeather] {
-        hours.filter { $0.date < interval.end && $0.date.addingTimeInterval(3600) > interval.start }
+        hours.filter { $0.date < interval.end && $0.date.addingTimeInterval(HourlyWeather.length) > interval.start }
     }
 
     func sun(on date: Date, calendar: Calendar) -> SunTimes? {
@@ -159,17 +162,14 @@ nonisolated extension ScheduleSettings {
     /// Decodes field by field so settings saved by an older version keep their values when fields are added.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
-            try container.decodeIfPresent(T.self, forKey: key) ?? fallback
-        }
         let defaults = ScheduleSettings()
-        suggestTimes = try value(.suggestTimes, defaults.suggestTimes)
-        weatherSource = try value(.weatherSource, defaults.weatherSource)
-        useCurrentLocation = try value(.useCurrentLocation, defaults.useCurrentLocation)
+        suggestTimes = try container.decode(.suggestTimes, default: defaults.suggestTimes)
+        weatherSource = try container.decode(.weatherSource, default: defaults.weatherSource)
+        useCurrentLocation = try container.decode(.useCurrentLocation, default: defaults.useCurrentLocation)
         place = try container.decodeIfPresent(WeatherPlace.self, forKey: .place)
-        earliestMinute = try value(.earliestMinute, defaults.earliestMinute)
-        latestMinute = try value(.latestMinute, defaults.latestMinute)
-        bufferMinutes = try value(.bufferMinutes, defaults.bufferMinutes)
+        earliestMinute = try container.decode(.earliestMinute, default: defaults.earliestMinute)
+        latestMinute = try container.decode(.latestMinute, default: defaults.latestMinute)
+        bufferMinutes = try container.decode(.bufferMinutes, default: defaults.bufferMinutes)
         calendarID = try container.decodeIfPresent(String.self, forKey: .calendarID)
     }
 }
@@ -193,11 +193,14 @@ nonisolated struct SlotWeather: Hashable, Sendable {
         }
     }
 
+    /// Below this rain chance (percent) a slot counts as dry.
+    static let dryBelowPercent = 30
+
     /// "9 °C, dry" or "14 °C, rain 60%".
     var summary: String {
         let temperature = "\(Int(temperatureC.rounded())) °C"
         let chance = Int((precipitationChance * 100).rounded())
-        guard chance >= 30 else { return "\(temperature), dry" }
+        guard chance >= Self.dryBelowPercent else { return "\(temperature), dry" }
         // Snow and worse are named; lighter conditions with a rain chance are just "rain".
         let kind = condition.severity >= SkyCondition.snow.severity ? condition.title.lowercased() : "rain"
         return "\(temperature), \(kind) \(chance)%"

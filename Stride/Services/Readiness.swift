@@ -24,6 +24,22 @@ nonisolated struct Readiness: Sendable {
         var text: String
     }
 
+    // Thresholds against the athlete's own baselines. Mild signals only count together; strong ones alone.
+    /// Resting HR above the 4-week average by this many bpm is a mild signal, by `strongRestingHRDelta` a strong one.
+    static let mildRestingHRDelta = 3.0
+    static let strongRestingHRDelta = 5.0
+    /// HRV at or below this share of the 4-week average is a mild signal, `strongHRVRatio` a strong one.
+    static let mildHRVRatio = 0.9
+    static let strongHRVRatio = 0.8
+    /// Sleep this many hours short of the target is a mild signal; `strongSleepShortfall`, or under `strongSleepHours`, a strong one.
+    static let mildSleepShortfall = 0.75
+    static let strongSleepShortfall = 1.5
+    static let strongSleepHours = 6.0
+    /// Acute:chronic load ratio above these is a mild or strong signal.
+    static let mildLoadRatio = 1.3
+    static let strongLoadRatio = 1.5
+    static let longStreakDays = 5
+
     var level: Level
     /// Fatigue signals, strongest first. Empty when everything is within range.
     var signals: [Signal]
@@ -41,8 +57,8 @@ nonisolated struct Readiness: Sendable {
         if let resting = day?.restingHeartRate, let baseline = ind.restingHR28 {
             // Rounded, so the classification matches the whole number shown.
             let delta = (resting - baseline).rounded()
-            if delta >= 3 {
-                signals.append(Signal(isStrong: delta >= 5, text: "Resting HR \(num(resting, 0)) bpm, \(num(delta, 0)) above your 4-week average"))
+            if delta >= Self.mildRestingHRDelta {
+                signals.append(Signal(isStrong: delta >= Self.strongRestingHRDelta, text: "Resting HR \(num(resting, 0)) bpm, \(num(delta, 0)) above your 4-week average"))
             } else {
                 fine.append("resting HR \(num(resting, 0)) bpm")
             }
@@ -50,31 +66,31 @@ nonisolated struct Readiness: Sendable {
         if let hrv = day?.hrvMs, let baseline = ind.hrv28, baseline > 0 {
             // Whole percent, so the classification matches the number shown.
             let ratio = 1 - ((1 - hrv / baseline) * 100).rounded() / 100
-            if ratio <= 0.9 {
-                signals.append(Signal(isStrong: ratio <= 0.8, text: "HRV \(num(hrv, 0)) ms, \(Int(((1 - ratio) * 100).rounded()))% below your 4-week average"))
+            if ratio <= Self.mildHRVRatio {
+                signals.append(Signal(isStrong: ratio <= Self.strongHRVRatio, text: "HRV \(num(hrv, 0)) ms, \(Int(((1 - ratio) * 100).rounded()))% below your 4-week average"))
             } else {
                 fine.append("HRV \(num(hrv, 0)) ms")
             }
         }
         if let night = snapshot.sleep.first(where: { $0.date == today }) {
             let short = profile.sleepTargetHours - night.asleepHours
-            let isStrong = night.asleepHours < 6 || short >= 1.5
-            if isStrong || short >= 0.75 {
+            let isStrong = night.asleepHours < Self.strongSleepHours || short >= Self.strongSleepShortfall
+            if isStrong || short >= Self.mildSleepShortfall {
                 signals.append(Signal(isStrong: isStrong, text: "Slept \(num(night.asleepHours, 1)) h last night (target \(num(profile.sleepTargetHours, 1)) h)"))
             } else {
                 fine.append("\(num(night.asleepHours, 1)) h sleep")
             }
         }
         if let acwr = ind.acwr {
-            if acwr > 1.5 {
+            if acwr > Self.strongLoadRatio {
                 signals.append(Signal(isStrong: true, text: "Training load ratio \(num(acwr, 2)): this week is well above your usual"))
-            } else if acwr > 1.3 {
+            } else if acwr > Self.mildLoadRatio {
                 signals.append(Signal(isStrong: false, text: "Training load ratio \(num(acwr, 2)): this week is above your usual"))
             } else {
                 fine.append("load ratio \(num(acwr, 2))")
             }
         }
-        if ind.consecutiveTrainingDays >= 5 {
+        if ind.consecutiveTrainingDays >= Self.longStreakDays {
             signals.append(Signal(isStrong: false, text: "\(ind.consecutiveTrainingDays) training days in a row"))
         }
 
@@ -136,8 +152,7 @@ nonisolated extension DayAdjustment {
     func clamped(to planned: PlannedDay) -> DayAdjustment {
         var session = self.session
         session.day = planned.day
-        let rank: [SessionIntensity: Int] = [.rest: 0, .easy: 1, .moderate: 2, .hard: 3]
-        if (rank[session.intensity] ?? 0) > (rank[planned.intensity] ?? 0) { session.intensity = planned.intensity }
+        if session.intensity.rank > planned.intensity.rank { session.intensity = planned.intensity }
         session.durationMinutes = min(session.durationMinutes, planned.durationMinutes)
         if planned.targetZone > 0, session.targetZone > planned.targetZone { session.targetZone = planned.targetZone }
         if session.intensity == .rest || session.durationMinutes == 0 {

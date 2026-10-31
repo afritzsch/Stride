@@ -1,8 +1,8 @@
 import Foundation
 
-extension SavedAnalysis {
+nonisolated extension SavedAnalysis {
     /// The plan entry for a date, by position from `planStartDate` (labels are checked when the plan is saved).
-    nonisolated func plannedDay(on date: Date, calendar: Calendar = .current) -> PlannedDay? {
+    func plannedDay(on date: Date, calendar: Calendar = .current) -> PlannedDay? {
         let start = calendar.startOfDay(for: planStartDate)
         guard let offset = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: date)).day,
               report.weekPlan.indices.contains(offset) else { return nil }
@@ -10,9 +10,9 @@ extension SavedAnalysis {
     }
 }
 
-extension Array where Element == SavedAnalysis {
+nonisolated extension Array where Element == SavedAnalysis {
     /// The session planned for a date by the newest analysis whose plan covers it (history is newest first).
-    nonisolated func plannedDay(on date: Date, calendar: Calendar = .current) -> PlannedDay? {
+    func plannedDay(on date: Date, calendar: Calendar = .current) -> PlannedDay? {
         lazy.compactMap { $0.plannedDay(on: date, calendar: calendar) }.first
     }
 }
@@ -44,6 +44,14 @@ nonisolated struct PlanAdherence: Sendable {
 
         var id: Date { date }
     }
+
+    /// A session shorter or longer than planned by more than this share is noted.
+    static let shorterThanRatio = 0.7
+    static let longerThanRatio = 1.3
+    /// Average heart rate in this zone (1-5) or above, on a day planned easy, counts as "harder".
+    static let tooHardZone = 4
+    /// Average heart rate in this zone or below, on a day planned hard, counts as "easier".
+    static let tooEasyZone = 2
 
     /// Ascending by date; only days a saved plan covered.
     var days: [Day]
@@ -87,18 +95,17 @@ nonisolated struct PlanAdherence: Sendable {
         guard !done.isEmpty else { return (.missed, []) }
 
         var notes: [String] = []
-        let knownSport = !planned.sport.isEmpty && planned.sport != "Other" && planned.sport != PlannedDay.rest
-        let matching = knownSport ? done.filter { $0.sport == planned.sport } : done
+        let matching = planned.hasKnownSport ? done.filter { $0.sport == planned.sport } : done
         if matching.isEmpty {
-            notes.append("\(Self.sports(done)) instead of \(planned.sport)")
+            notes.append("\(sports(done)) instead of \(planned.sport)")
         }
         let measured = matching.isEmpty ? done : matching
 
         let minutes = measured.map(\.durationMinutes).reduce(0, +)
         if planned.durationMinutes > 0 {
             let ratio = minutes / Double(planned.durationMinutes)
-            if ratio < 0.7 { notes.append("shorter: \(Int(minutes.rounded())) of \(planned.durationMinutes) min") }
-            if ratio > 1.3 { notes.append("longer: \(Int(minutes.rounded())) of \(planned.durationMinutes) min") }
+            if ratio < shorterThanRatio { notes.append("shorter: \(Int(minutes.rounded())) of \(planned.durationMinutes) min") }
+            if ratio > longerThanRatio { notes.append("longer: \(Int(minutes.rounded())) of \(planned.durationMinutes) min") }
         }
 
         // Average HR of the longest session, as a zone (1-5). Averages hide intervals, so only clear
@@ -106,9 +113,9 @@ nonisolated struct PlanAdherence: Sendable {
         if let main = measured.max(by: { $0.durationMinutes < $1.durationMinutes }), let heartRate = main.averageHeartRate {
             let zone = zones.index(for: heartRate) + 1
             let easyTarget = planned.targetZone > 0 ? planned.targetZone <= 2 : planned.intensity == .easy
-            if easyTarget, zone >= 4 {
+            if easyTarget, zone >= tooHardZone {
                 notes.append("harder: avg HR \(Int(heartRate.rounded())) (Z\(zone))\(planned.targetZone > 0 ? ", planned Z\(planned.targetZone)" : "")")
-            } else if planned.intensity == .hard, zone <= 2 {
+            } else if planned.intensity == .hard, zone <= tooEasyZone {
                 notes.append("easier: avg HR \(Int(heartRate.rounded())) (Z\(zone))")
             }
         }
@@ -122,9 +129,9 @@ nonisolated struct PlanAdherence: Sendable {
     }
 }
 
-extension PlannedDay {
+nonisolated extension PlannedDay {
     /// "Easy run (Running, easy, 45 min, Z2)" for prompts.
-    nonisolated var briefDescription: String {
+    var briefDescription: String {
         guard !isRest else { return PlannedDay.rest }
         var parts: [String] = []
         if !sport.isEmpty { parts.append(sport) }
