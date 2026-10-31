@@ -126,7 +126,13 @@ extension AppModel {
             "availability": String(describing: model.availability),
             "supportsCurrentLocale": model.supportsLocale(),
             "locale": Locale.current.identifier,
+            "contextSize": model.contextSize,
         ]
+        // What the weekly analysis spends before its prompt: instructions plus the report's schema.
+        if let instructions = try? await model.tokenCount(for: PromptBuilder.instructions),
+           let schema = try? await model.tokenCount(for: AnalysisReport.generationSchema) {
+            probe["weeklyFixedTokens"] = instructions + schema
+        }
         let url = URL.documentsDirectory.appending(path: "model-probe.json")
         func save() {
             let data = try? JSONSerialization.data(withJSONObject: probe, options: [.prettyPrinted, .sortedKeys])

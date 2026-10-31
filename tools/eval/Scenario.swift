@@ -21,10 +21,10 @@ struct Scenario {
         PromptBuilder.dayLabel(day(offset), calendar: calendar)
     }
 
-    func weeklyPrompt(compact: Bool) -> String {
+    func weeklyPrompt(compact: Bool, part: PromptBuilder.Part = .report) -> String {
         PromptBuilder(
             snapshot: snapshot, metrics: metrics, profile: profile, planStart: planStart, compact: compact,
-            history: history, reviews: reviews, calendar: calendar
+            history: history, reviews: reviews, part: part, calendar: calendar
         ).prompt
     }
 

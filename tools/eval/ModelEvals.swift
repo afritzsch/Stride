@@ -15,6 +15,9 @@ func runModelEvals(filter: String?) async {
     for scenario in Scenario.all() where filter == nil || scenario.name.localizedCaseInsensitiveContains(filter!) {
         await evalWeekly(scenario)
     }
+    if filter == nil || "steps".contains(filter!) {
+        await evalWeeklyInSteps(Scenario.demoWithHistory())
+    }
     if filter == nil || "review".contains(filter!) {
         await evalRunReview(Scenario.demoWithHistory())
         await evalStrengthReview(Scenario.demoWithHistory())
@@ -56,6 +59,11 @@ private func evalWeekly(_ scenario: Scenario) async {
         )
         var report = result.report
         print("  generated in \(Int(Date.now.timeIntervalSince(start))) s")
+        let model = SystemLanguageModel.default
+        let outputTokens = try? await model.tokenCount(for: result.report.generatedContent.jsonString)
+        let instructionTokens = try? await model.tokenCount(for: PromptBuilder.instructions)
+        let schemaTokens = try? await model.tokenCount(for: schema)
+        print("  output \(outputTokens ?? -1) tokens; instructions \(instructionTokens ?? -1), schema \(schemaTokens ?? -1)")
         print("  headline: \(report.headline) [\(report.trainingStatus.rawValue)]")
         let labels = scenario.planLabels
         let raw = PlanCheck.problems(PlanCheck.normalized(report.weekPlan, labels: labels), labels: labels, profile: scenario.profile)
@@ -78,6 +86,42 @@ private func evalWeekly(_ scenario: Scenario) async {
         }
     } catch {
         check(false, "\(scenario.name): \(error)")
+    }
+}
+
+/// The iPhone's on-device window is 4096 tokens (a Mac has 8192), too small for the brief plus the whole report, so
+/// the app writes the assessment and the plan in two requests. A Mac never takes that path, so run it here.
+private func evalWeeklyInSteps(_ scenario: Scenario) async {
+    section("Weekly analysis in two steps (iPhone window)")
+    let model = SystemLanguageModel.default
+    let phoneWindow = 4096
+    let instructions = PromptBuilder.instructions
+    let analyzer = AppleAnalyzer(allowPrivateCloud: false)
+    func report(_ name: String, prompt: String, schema: GenerationSchema, output: GeneratedContent) async {
+        let input = await tokens(instructions, prompt, schema) ?? -1
+        let out = (try? await model.tokenCount(for: output.jsonString)) ?? -1
+        print("  \(name): \(input) in + \(out) out = \(input + out) of \(phoneWindow)")
+        check(input + out < phoneWindow, "\(scenario.name): \(name) fits the iPhone window")
+    }
+    do {
+        let assessmentPrompt = scenario.weeklyPrompt(compact: true, part: .assessment)
+        let assessment = try await analyzer.analyze(
+            AnalysisAssessment.self, instructions: instructions, fullPrompt: assessmentPrompt, compactPrompt: assessmentPrompt
+        ).report
+        await report("assessment", prompt: assessmentPrompt, schema: AnalysisAssessment.generationSchema, output: assessment.generatedContent)
+        print("  headline: \(assessment.headline) [\(assessment.trainingStatus.rawValue)]")
+
+        let planPrompt = scenario.weeklyPrompt(compact: true, part: .plan(assessment: "\(assessment.headline) \(assessment.assessment)"))
+        let plan = try await analyzer.analyze(
+            WeekPlan.self, instructions: instructions, fullPrompt: planPrompt, compactPrompt: planPrompt
+        ).report
+        await report("plan", prompt: planPrompt, schema: WeekPlan.generationSchema, output: plan.generatedContent)
+        for day in plan.days {
+            print("    \(day.day) | \(day.sport) | \(day.intensity.rawValue) | \(day.session) | \(day.durationMinutes) min | Z\(day.targetZone)")
+        }
+        check(plan.days.map(\.day) == scenario.planLabels, "\(scenario.name): two-step plan has the 7 labels in order")
+    } catch {
+        check(false, "\(scenario.name), two steps: \(error)")
     }
 }
 
