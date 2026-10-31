@@ -5,6 +5,9 @@ import Foundation
 nonisolated enum OpenMeteo {
     static let attribution = "Weather data by Open-Meteo.com"
     static let attributionURL = URL(string: "https://open-meteo.com/")!
+    /// The API's maximum forecast length.
+    private static let maxDays = 16
+    private static let requestTimeout: TimeInterval = 20
 
     static func url(latitude: Double, longitude: Double, days: Int) -> URL {
         var components = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
@@ -17,14 +20,16 @@ nonisolated enum OpenMeteo {
             URLQueryItem(name: "timeformat", value: "unixtime"),
             URLQueryItem(name: "timezone", value: "auto"),
             URLQueryItem(name: "wind_speed_unit", value: "kmh"),
-            URLQueryItem(name: "forecast_days", value: "\(min(max(days, 1), 16))"),
+            URLQueryItem(name: "forecast_days", value: "\(min(max(days, 1), maxDays))"),
         ]
         return components.url!
     }
 
     static func fetch(latitude: Double, longitude: Double, placeName: String?, days: Int = 8) async throws -> WeatherForecast {
-        let (data, response) = try await URLSession.shared.data(from: url(latitude: latitude, longitude: longitude, days: days))
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        var request = URLRequest(url: url(latitude: latitude, longitude: longitude, days: days))
+        request.timeoutInterval = requestTimeout
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw URLError(.badServerResponse, userInfo: [NSLocalizedDescriptionKey: "The weather service answered with status \(http.statusCode)."])
         }
         return try parse(data, placeName: placeName)

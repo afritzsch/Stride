@@ -32,7 +32,10 @@ DEVICE_TYPE_NAME = "iPhone 18 Pro"
 
 
 def run(*args: str, check: bool = True, timeout: int = 900) -> subprocess.CompletedProcess:
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{' '.join(args)} timed out after {timeout}s") from None
     if check and result.returncode:
         # CalledProcessError hides stderr, which is the part that says why simctl failed.
         detail = result.stderr.strip() or result.stdout.strip()
@@ -58,9 +61,12 @@ def device_udid() -> str:
     ios = [r for r in runtimes if r["platform"] == "iOS" and r["isAvailable"]]
     if not ios:
         raise RuntimeError("No iOS Simulator runtime installed (Xcode > Settings > Components).")
-    runtime = ios[-1]
+    # The newest runtime; simctl doesn't promise to list them in version order.
+    runtime = max(ios, key=lambda r: [int(part) for part in r["version"].split(".") if part.isdigit()])
     types = {t["name"]: t["identifier"] for t in runtime.get("supportedDeviceTypes", [])}
-    device_type = types.get(DEVICE_TYPE_NAME) or next(v for k, v in reversed(list(types.items())) if k.startswith("iPhone"))
+    device_type = types.get(DEVICE_TYPE_NAME) or next((v for k, v in reversed(list(types.items())) if k.startswith("iPhone")), None)
+    if not device_type:
+        raise RuntimeError(f"Runtime {runtime['name']} has no iPhone device type to create {DEVICE_NAME!r} from.")
     return simctl("create", DEVICE_NAME, device_type, runtime["identifier"]).stdout.strip()
 
 
@@ -106,8 +112,9 @@ def launch(
 ) -> dict:
     """Install and (re)launch the app on a screen.
 
-    route: dashboard | progress | coach | chat | plan | settings | workouts | workout:<latest|latest-run|index|uuid> |
-        skill:<name> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>
+    route: dashboard | progress | coach | chat | plan | settings | workouts | strength |
+        workout:<latest|latest-run|latest-strength|index|uuid> | skill:<name> |
+        metric:<load|acwr|sleep|restingHR|hrv|steps|weight>
     demo: force demo data on/off (None keeps the app's setting).
     fixture: path on this Mac to a HealthFixture JSON to replay instead of HealthKit; omit to clear.
     scroll_to: on the first workout opened, scroll to route | heart-rate | zones | splits | review | analysis;
@@ -144,7 +151,9 @@ def launch(
     if sheet:
         args += ["-planSheet", sheet]
     out = simctl("launch", udid, BUNDLE_ID, *args).stdout.strip()
-    pid = int(out.split(":")[-1].strip()) if ":" in out else None
+    # simctl prints "<bundle id>: <pid>".
+    pid_text = out.rpartition(":")[2].strip()
+    pid = int(pid_text) if pid_text.isdigit() else None
 
     time.sleep(wait)
     running = pid is not None and run("ps", "-p", str(pid), check=False).returncode == 0
@@ -189,19 +198,29 @@ def export_fixture(output: str, demo: bool | None = True) -> str:
     udid = boot()
     simctl("terminate", udid, BUNDLE_ID, check=False)
     container = data_container(udid)
-    source = container / "Documents" / "export.json" if container else None
     if container:
         # A fixture left by `launch --fixture` would be exported instead of demo data, and an export left
         # by an earlier timed-out run would be picked up before the app writes the new one.
         if demo:
             (container / "Documents" / "fixture.json").unlink(missing_ok=True)
-        source.unlink(missing_ok=True)
+        (container / "Documents" / "export.json").unlink(missing_ok=True)
     args = ["-exportFixture", "YES"]
     if demo is not None:
         args += ["-useDemoData", "YES" if demo else "NO"]
     simctl("launch", udid, BUNDLE_ID, *args)
+    # The container doesn't exist before the app's first install.
+    container = container or data_container(udid)
+    if not container:
+        raise RuntimeError("Couldn't find the app's data container; build and launch the app first.")
+    source = container / "Documents" / "export.json"
     for _ in range(40):
-        if source and source.exists():
+        if source.exists():
+            # The app may still be writing; only take the file once it parses.
+            try:
+                json.loads(source.read_text())
+            except ValueError:
+                time.sleep(0.5)
+                continue
             shutil.copyfile(source, output)
             source.unlink()
             return output
@@ -264,8 +283,8 @@ def serve() -> None:
         route: str = "dashboard", demo: bool | None = None, fixture: str | None = None,
         scroll_to: str | None = None, analyze: bool = False, reinstall: bool = False, sheet: str | None = None,
     ) -> dict:
-        """Install and relaunch Stride on a screen. route: dashboard | progress | coach | chat | plan | settings | workouts |
-        workout:<latest|latest-run|index|uuid> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>. fixture: Mac path of a HealthFixture JSON to replay.
+        """Install and relaunch Stride on a screen. route: dashboard | progress | coach | chat | plan | settings | workouts | strength |
+        workout:<latest|latest-run|latest-strength|index|uuid> | skill:<name> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>. fixture: Mac path of a HealthFixture JSON to replay.
         scroll_to: route | heart-rate | zones | splits | review | analysis; adherence on plan.
         sheet: on plan, week | edit:<n> | time:<n> (n = days from today)."""
         return launch(route, demo, fixture, scroll_to, analyze, reinstall, sheet=sheet)

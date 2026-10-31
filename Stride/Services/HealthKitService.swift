@@ -14,6 +14,15 @@ nonisolated struct HealthKitService: Sendable {
 
     private static let bpm = HKUnit.count().unitDivided(by: .minute())
 
+    /// Sleep is grouped into nights split at noon: shifting a sample by 12 hours puts one that starts at 23:00 or
+    /// 01:00 on the wake-up day. Chunked reads start at the same time of day, where nights are split anyway.
+    private static let nightShift: TimeInterval = 12 * 3600
+    /// A sample starting before `nightEndsHour` or from `nightStartsHour` belongs to the night, and so does a
+    /// daytime one starting within `napGap` of the sleep before it (a lie-in).
+    private static let nightEndsHour = 10
+    private static let nightStartsHour = 18
+    private static let napGap: TimeInterval = 30 * 60
+
     private var readTypes: Set<HKObjectType> {
         [
             HKQuantityType(.stepCount),
@@ -70,10 +79,13 @@ nonisolated struct HealthKitService: Sendable {
         async let restingHR = dailyValues(.restingHeartRate, unit: Self.bpm, options: .discreteAverage, from: start, to: now)
         async let hrv = dailyValues(.heartRateVariabilitySDNN, unit: .secondUnit(with: .milli), options: .discreteAverage, from: start, to: now)
         async let bodyMass = dailyValues(.bodyMass, unit: .gramUnit(with: .kilo), options: .discreteAverage, from: start, to: now)
-        async let sleep = sleepNights(from: start.addingTimeInterval(-12 * 3600), to: now, calendar: calendar)
+        async let sleep = sleepNights(from: start.addingTimeInterval(-Self.nightShift), to: now, calendar: calendar)
         async let workouts = workouts(from: start, to: now)
 
         let (stepsByDay, energyByDay, rhrByDay, hrvByDay, massByDay) = await (steps, energy, restingHR, hrv, bodyMass)
+        // The quantity queries swallow failures (a type without data or permission is just empty), which would also
+        // turn a cancelled refresh into an empty snapshot.
+        try Task.checkCancellation()
         var dailyMetrics: [DailyMetrics] = []
         var day = start
         while day <= today {
@@ -114,6 +126,16 @@ nonisolated struct HealthKitService: Sendable {
         return snapshot
     }
 
+    // MARK: - Query helpers
+
+    private static func range(from start: Date, to end: Date) -> NSPredicate {
+        HKQuery.predicateForSamples(withStart: start, end: end)
+    }
+
+    private static func samples(_ identifier: HKQuantityTypeIdentifier, in range: NSPredicate) -> HKSamplePredicate<HKQuantitySample> {
+        .quantitySample(type: HKQuantityType(identifier), predicate: range)
+    }
+
     // MARK: - Daily quantities
 
     private func dailyValues(
@@ -124,7 +146,7 @@ nonisolated struct HealthKitService: Sendable {
         to end: Date
     ) async -> [Date: Double] {
         let descriptor = HKStatisticsCollectionQueryDescriptor(
-            predicate: .quantitySample(type: HKQuantityType(identifier), predicate: HKQuery.predicateForSamples(withStart: start, end: end)),
+            predicate: Self.samples(identifier, in: Self.range(from: start, to: end)),
             options: options,
             anchorDate: start,
             intervalComponents: DateComponents(day: 1)
@@ -143,8 +165,7 @@ nonisolated struct HealthKitService: Sendable {
 
     // MARK: - Sleep
 
-    /// Reads a year at a time so years of sleep-stage samples aren't all in memory at once. Chunks split at the
-    /// same time of day as `start` (noon, from the caller), where nights are split anyway.
+    /// Reads a year at a time so years of sleep-stage samples aren't all in memory at once.
     private func sleepNights(from start: Date, to end: Date, calendar: Calendar) async throws -> [SleepNight] {
         var nights: [SleepNight] = []
         var chunkStart = start
@@ -158,7 +179,7 @@ nonisolated struct HealthKitService: Sendable {
 
     private func sleepNightsChunk(from start: Date, to end: Date, calendar: Calendar) async throws -> [SleepNight] {
         let descriptor = HKSampleQueryDescriptor(
-            predicates: [.categorySample(type: HKCategoryType(.sleepAnalysis), predicate: HKQuery.predicateForSamples(withStart: start, end: end))],
+            predicates: [.categorySample(type: HKCategoryType(.sleepAnalysis), predicate: Self.range(from: start, to: end))],
             sortDescriptors: [SortDescriptor(\.startDate)]
         )
         let samples = try await descriptor.result(for: store)
@@ -168,13 +189,12 @@ nonisolated struct HealthKitService: Sendable {
         var lastEnd = Date.distantPast
         let nightSamples = samples.filter {
             let hour = calendar.component(.hour, from: $0.startDate)
-            let isNight = hour < 10 || hour >= 18 || $0.startDate <= lastEnd.addingTimeInterval(30 * 60)
+            let isNight = hour < Self.nightEndsHour || hour >= Self.nightStartsHour || $0.startDate <= lastEnd.addingTimeInterval(Self.napGap)
             if isNight { lastEnd = max(lastEnd, $0.endDate) }
             return isNight
         }
-        // Shift by 12h so a night that starts at 23:00 or 01:00 lands on the wake-up day.
         let nights = Dictionary(grouping: nightSamples) {
-            calendar.startOfDay(for: $0.startDate.addingTimeInterval(12 * 3600))
+            calendar.startOfDay(for: $0.startDate.addingTimeInterval(Self.nightShift))
         }
 
         let asleepValues = HKCategoryValueSleepAnalysis.allAsleepValues.map(\.rawValue)
@@ -226,7 +246,7 @@ nonisolated struct HealthKitService: Sendable {
 
     private func workouts(from start: Date, to end: Date) async throws -> [WorkoutSummary] {
         let descriptor = HKSampleQueryDescriptor(
-            predicates: [.workout(HKQuery.predicateForSamples(withStart: start, end: end))],
+            predicates: [.workout(Self.range(from: start, to: end))],
             sortDescriptors: [SortDescriptor(\.startDate)]
         )
         let workouts = try await descriptor.result(for: store)
@@ -246,7 +266,7 @@ nonisolated struct HealthKitService: Sendable {
             var heartRate = workout.statistics(for: HKQuantityType(.heartRate))
             if heartRate?.averageQuantity() == nil {
                 // Some apps don't attach heart rate to the workout; read the samples in its time range instead.
-                heartRate = await heartRateStatistics(from: workout.startDate, to: workout.endDate)
+                heartRate = await heartRateStatistics(in: Self.range(from: workout.startDate, to: workout.endDate))
             }
 
             summaries.append(WorkoutSummary(
@@ -279,7 +299,7 @@ nonisolated struct HealthKitService: Sendable {
         guard let workout = try await lookup.result(for: store).first else {
             throw CocoaError(.fileNoSuchFile)
         }
-        let range = HKQuery.predicateForSamples(withStart: workout.startDate, end: workout.endDate)
+        let range = Self.range(from: workout.startDate, to: workout.endDate)
         let isRun = workout.workoutActivityType == .running
         let isRide = workout.workoutActivityType == .cycling
 
@@ -288,7 +308,7 @@ nonisolated struct HealthKitService: Sendable {
             (metadata[key] as? HKQuantity).flatMap { $0.is(compatibleWith: unit) ? $0.doubleValue(for: unit) : nil }
         }
 
-        return RawWorkoutData(
+        let raw = RawWorkoutData(
             workoutID: workout.uuid,
             start: workout.startDate,
             end: workout.endDate,
@@ -307,6 +327,9 @@ nonisolated struct HealthKitService: Sendable {
             groundContactMs: isRun ? await average(.runningGroundContactTime, unit: .secondUnit(with: .milli), in: range) : nil,
             route: await route(for: workout)
         )
+        // These queries swallow failures (a missing type is just empty); don't hand back a cancelled, half-empty result.
+        try Task.checkCancellation()
+        return raw
     }
 
     /// GPS fixes of every route attached to the workout; empty when the source didn't share one.
@@ -339,14 +362,21 @@ nonisolated struct HealthKitService: Sendable {
         let snapshot = try await fetchSnapshot()
         var workouts: [RawWorkoutData] = []
         for workout in snapshot.workouts {
-            if let raw = try? await rawWorkoutData(for: workout) { workouts.append(raw) }
+            // A workout that can't be read is left out; cancellation still stops the export.
+            do {
+                workouts.append(try await rawWorkoutData(for: workout))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                continue
+            }
         }
         return HealthFixture(exportedAt: .now, snapshot: snapshot, workouts: workouts)
     }
 
     private func rawSamples(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, in range: NSPredicate) async -> [RawSample] {
         let descriptor = HKSampleQueryDescriptor(
-            predicates: [.quantitySample(type: HKQuantityType(identifier), predicate: range)],
+            predicates: [Self.samples(identifier, in: range)],
             sortDescriptors: [SortDescriptor(\.startDate)]
         )
         let samples = (try? await descriptor.result(for: store)) ?? []
@@ -356,18 +386,12 @@ nonisolated struct HealthKitService: Sendable {
     }
 
     private func average(_ identifier: HKQuantityTypeIdentifier, unit: HKUnit, in range: NSPredicate) async -> Double? {
-        let descriptor = HKStatisticsQueryDescriptor(
-            predicate: .quantitySample(type: HKQuantityType(identifier), predicate: range),
-            options: .discreteAverage
-        )
+        let descriptor = HKStatisticsQueryDescriptor(predicate: Self.samples(identifier, in: range), options: .discreteAverage)
         return try? await descriptor.result(for: store)?.averageQuantity()?.doubleValue(for: unit)
     }
 
-    private func heartRateStatistics(from start: Date, to end: Date) async -> HKStatistics? {
-        let descriptor = HKStatisticsQueryDescriptor(
-            predicate: .quantitySample(type: HKQuantityType(.heartRate), predicate: HKQuery.predicateForSamples(withStart: start, end: end)),
-            options: [.discreteAverage, .discreteMax]
-        )
+    private func heartRateStatistics(in range: NSPredicate) async -> HKStatistics? {
+        let descriptor = HKStatisticsQueryDescriptor(predicate: Self.samples(.heartRate, in: range), options: [.discreteAverage, .discreteMax])
         return try? await descriptor.result(for: store)
     }
 }
