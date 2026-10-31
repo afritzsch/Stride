@@ -1,26 +1,42 @@
+import Charts
 import SwiftUI
 
-struct Card<Content: View>: View {
+struct Card<Content: View, Accessory: View>: View {
     var title: String?
     /// Shows a chevron next to the title, for cards wrapped in a NavigationLink.
     var isLink = false
-    @ViewBuilder var content: Content
+    var accessory: Accessory
+    var content: Content
+
+    init(title: String? = nil, isLink: Bool = false, @ViewBuilder accessory: () -> Accessory, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.isLink = isLink
+        self.accessory = accessory()
+        self.content = content()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let title {
                 HStack {
                     Text(title).font(.headline)
-                    if isLink {
+                    if Accessory.self != EmptyView.self || isLink {
                         Spacer()
-                        LinkChevron()
                     }
+                    accessory
+                    if isLink { LinkChevron() }
                 }
             }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .cardBackground()
+    }
+}
+
+extension Card where Accessory == EmptyView {
+    init(title: String? = nil, isLink: Bool = false, @ViewBuilder content: () -> Content) {
+        self.init(title: title, isLink: isLink, accessory: { EmptyView() }, content: content)
     }
 }
 
@@ -150,78 +166,6 @@ struct GeneratedHeader: View {
     }
 }
 
-extension Color {
-    /// Heart-rate zone colors, Z1 (index 0) to Z5; the accent color for nil (no reading).
-    static func heartRateZone(_ index: Int?) -> Color {
-        guard let index else { return .accentColor }
-        return [.gray, .blue, .green, .orange, .red][min(max(index, 0), 4)]
-    }
-}
-
-extension EffortLevel {
-    var color: Color {
-        switch self {
-        case .recovery: .gray
-        case .easy: .green
-        case .moderate: .blue
-        case .hard: .orange
-        case .maximal: .red
-        }
-    }
-}
-
-extension TrainingStatus {
-    var color: Color {
-        switch self {
-        case .productive: .green
-        case .maintaining: .blue
-        case .overreaching: .red
-        case .recovering: .teal
-        case .detraining: .orange
-        case .insufficientData: .gray
-        }
-    }
-}
-
-extension InsightTone {
-    var color: Color {
-        switch self {
-        case .positive: .green
-        case .neutral: .blue
-        case .warning: .orange
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .positive: "checkmark.circle.fill"
-        case .neutral: "info.circle.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        }
-    }
-}
-
-extension Priority {
-    var color: Color {
-        switch self {
-        case .high: .red
-        case .medium: .orange
-        case .low: .secondary
-        }
-    }
-}
-
-extension SessionIntensity {
-    var color: Color {
-        switch self {
-        case .rest: .gray
-        case .easy: .green
-        case .moderate: .orange
-        case .hard: .red
-        }
-    }
-}
-
 enum Format {
     static func number(_ value: Double?, digits: Int = 0) -> String {
         guard let value, value.isFinite else { return "–" }
@@ -260,5 +204,55 @@ nonisolated extension WorkoutSummary {
     /// "Running 42 min".
     var sportAndMinutes: String {
         "\(sport) \(Int(durationMinutes.rounded())) min"
+    }
+}
+
+/// A grid of small caption/value pairs inside a card, for the stats of a workout or strength summary.
+struct StatGrid: View {
+    var stats: [(title: String, value: String)]
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], alignment: .leading, spacing: 12) {
+            ForEach(stats, id: \.title) { stat in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(stat.title).font(.caption).foregroundStyle(.secondary)
+                    Text(stat.value).font(.headline).monospacedDigit()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .cardBackground()
+    }
+}
+
+/// Rows with a divider between them, for lists inside a card.
+struct DividedForEach<Data: RandomAccessCollection, Row: View>: View where Data.Element: Identifiable {
+    var data: Data
+    @ViewBuilder var row: (Data.Element) -> Row
+
+    var body: some View {
+        ForEach(data) { item in
+            row(item)
+            if item.id != data.last?.id { Divider() }
+        }
+    }
+}
+
+extension ChartContent {
+    /// The dashed grey line for a target, average or baseline.
+    func referenceLine() -> some ChartContent {
+        lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4])).foregroundStyle(.secondary)
+    }
+}
+
+extension View {
+    /// Date labels every two weeks, for charts with one bar per week.
+    func biweeklyDateAxis() -> some View {
+        chartXAxis {
+            AxisMarks(values: .stride(by: .weekOfYear, count: 2)) { _ in
+                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+            }
+        }
     }
 }
