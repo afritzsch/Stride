@@ -24,7 +24,7 @@ extension AppModel {
         func prompt(_ part: PromptBuilder.Part, compact: Bool) -> String {
             PromptBuilder(
                 snapshot: snapshot, metrics: metrics, profile: profile, planStart: planStart, compact: compact,
-                history: history, reviews: runAnalyses, athleteDays: athleteDays,
+                history: history, reviews: runAnalyses, athleteDays: athleteDays, adjustment: todayAdjustment,
                 availability: compact ? availability.compact : availability.full, part: part
             ).prompt
         }
@@ -51,9 +51,14 @@ extension AppModel {
                 result = try await generateReportInSteps(prompt: prompt)
             }
             var report = result.output
+            report.trainingStatus = TrainingStatus.measured(metrics, now: snapshot.fetchedAt, calendar: calendar)
             let labels = PromptBuilder.planLabels(start: planStart, calendar: calendar)
             let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar)
-            let planNotice = await checkPlan(&report, labels: labels, pinned: pinned)
+            let context = PlanContext(
+                metrics: metrics, profile: profile, planStart: planStart,
+                freeMinutes: schedule.longestFreeMinutes(start: planStart), calendar: calendar
+            )
+            let planNotice = await checkPlan(&report, labels: labels, context: context, pinned: pinned)
             analysisNotice = [result.notice, planNotice].compactMap(\.self).joined(separator: " ").nilIfEmpty
             let saved = SavedAnalysis(createdAt: .now, modelName: result.modelName, planStartDate: planStart, report: report)
             history = Array(([saved] + history).prefix(Limits.savedAnalyses))
@@ -71,7 +76,7 @@ extension AppModel {
         analysisPreview = nil
         let assessment = try await generate(
             AnalysisAssessment.self,
-            instructions: PromptBuilder.instructions,
+            instructions: PromptBuilder.instructions(for: .assessment),
             fullPrompt: prompt(.assessment, false),
             compactPrompt: prompt(.assessment, true)
         ) { [weak self] partial in self?.analysisPreview = AnalysisReport.PartiallyGenerated(partial) }
@@ -80,24 +85,28 @@ extension AppModel {
         let summary = PromptBuilder.quote("\(assessment.output.headline) \(assessment.output.assessment)", limit: 500)
         let plan = try await generate(
             WeekPlan.self,
-            instructions: PromptBuilder.instructions,
+            instructions: PromptBuilder.instructions(for: .plan(assessment: summary)),
             fullPrompt: prompt(.plan(assessment: summary), false),
-            compactPrompt: prompt(.plan(assessment: summary), true)
+            compactPrompt: prompt(.plan(assessment: summary), true),
+            options: AppleAnalyzer.precise
         ) { [weak self] partial in self?.analysisPreview?.weekPlan = partial.days }
 
         return (assessment.output.report(weekPlan: plan.output.days), plan.modelName, assessment.notice ?? plan.notice)
     }
 
-    /// Fixes labels and rest days in code, then asks the model once to fix rules it broke (hours, training days,
-    /// back-to-back hard days). Returns a notice when problems remain.
-    private func checkPlan(_ report: inout AnalysisReport, labels: [String], pinned: [Int: PlannedDay]) async -> String? {
-        let problems = await PlanRepair.run(&report, labels: labels, profile: profile, pinned: pinned, log: { debugLog($0) }) { instructions, prompt in
+    /// Fixes in code what needs no judgment (labels, rest days, training days, minutes, hard days in a row), then
+    /// asks the model once to fix what's left (e.g. sessions longer than the free time). Returns a notice when code
+    /// changed the plan or problems remain.
+    private func checkPlan(_ report: inout AnalysisReport, labels: [String], context: PlanContext, pinned: [Int: PlannedDay]) async -> String? {
+        let outcome = await PlanRepair.run(&report, labels: labels, profile: profile, context: context, pinned: pinned, log: { debugLog($0) }) { instructions, prompt in
             analysisStep = "Fixing the plan…"
             analysisPreview?.weekPlan = nil
-            return try await generate(WeekPlan.self, instructions: instructions, fullPrompt: prompt, compactPrompt: prompt).output
+            return try await generate(WeekPlan.self, instructions: instructions, fullPrompt: prompt, compactPrompt: prompt, options: AppleAnalyzer.precise).output
         }
-        guard !problems.isEmpty else { return nil }
-        return "Check the plan: it may not fit your settings (\(problems.count == 1 ? "1 problem" : "\(problems.count) problems") left)."
+        let days = Set(outcome.changes.compactMap { $0.split(separator: ":").first }).count
+        let changed = days == 0 ? nil : "Stride eased \(days == 1 ? "1 day" : "\(days) days") of the plan to fit your settings and recent training."
+        let left = outcome.problems.isEmpty ? nil : "Check the plan: it may not fit your settings (\(outcome.problems.count == 1 ? "1 problem" : "\(outcome.problems.count) problems") left)."
+        return [changed, left].compactMap(\.self).joined(separator: " ").nilIfEmpty
     }
 
     func deleteAnalyses(at offsets: IndexSet) {
@@ -159,30 +168,36 @@ extension AppModel {
             ).prompt
         }
         defer { runPreviews[id] = nil }
-        let result = try await generate(
-            RunAnalysis.self,
-            instructions: RunPromptBuilder.instructions(for: detail.summary.kind),
-            fullPrompt: prompt(compact: false),
-            compactPrompt: prompt(compact: true)
-        ) { [weak self] partial in self?.runPreviews[id] = partial }
-        var analysis = result.output
+        let instructions = RunPromptBuilder.instructions(for: detail.summary.kind)
+        var analysis: RunAnalysis
+        let modelName: String
+        let notice: String?
         if detail.summary.kind == .strength {
-            analysis.effort = nil
-        } else if let measured = EffortLevel.measured(
-            zoneSeconds: detail.zoneSeconds(zones: metrics.heartRateZones),
-            durationMinutes: detail.summary.durationMinutes
-        ) {
-            analysis.effort = measured
+            let result = try await generate(
+                StrengthReview.self, instructions: instructions, fullPrompt: prompt(compact: false), compactPrompt: prompt(compact: true)
+            ) { [weak self] partial in self?.runPreviews[id] = RunAnalysis.PartiallyGenerated(partial) }
+            (analysis, modelName, notice) = (result.output.analysis, result.modelName, result.notice)
+        } else {
+            let result = try await generate(
+                RunAnalysis.self, instructions: instructions, fullPrompt: prompt(compact: false), compactPrompt: prompt(compact: true)
+            ) { [weak self] partial in self?.runPreviews[id] = partial }
+            (analysis, modelName, notice) = (result.output, result.modelName, result.notice)
+            if let measured = EffortLevel.measured(
+                zoneSeconds: detail.zoneSeconds(zones: metrics.heartRateZones),
+                durationMinutes: detail.summary.durationMinutes
+            ) {
+                analysis.effort = measured
+            }
         }
         runAnalyses[id] = SavedRunAnalysis(
             workoutID: id,
             createdAt: .now,
-            modelName: result.modelName,
+            modelName: modelName,
             note: note,
             analysis: analysis
         )
         writeDebugState(detail: detail)
-        return result.notice
+        return notice
     }
 
     // MARK: - The model
@@ -194,6 +209,7 @@ extension AppModel {
         instructions: String,
         fullPrompt: String,
         compactPrompt: String,
+        options: GenerationOptions = AppleAnalyzer.writing,
         onPartial: AppleAnalyzer.PartialHandler<Output>? = nil
     ) async throws -> (output: Output, modelName: String, notice: String?) {
         let result = try await AppleAnalyzer(allowPrivateCloud: usesPrivateCloud).analyze(
@@ -201,6 +217,7 @@ extension AppModel {
             instructions: instructions,
             fullPrompt: fullPrompt,
             compactPrompt: compactPrompt,
+            options: options,
             onPartial: onPartial
         )
         return (result.report, result.route.title, result.fallbackReason.map { "\($0) Used the on-device model instead." })

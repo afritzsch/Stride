@@ -21,7 +21,8 @@ struct ChatView: View {
                         intro
                     }
                     ForEach(chat.messages) { message in
-                        MessageRow(message: message).id(message.id)
+                        MessageRow(message: message, canUndo: chat.undoable.contains(message.id)) { chat.undo(message.id) }
+                            .id(message.id)
                     }
                     if let activity = chat.activity {
                         Label(activity, systemImage: "magnifyingglass").font(.footnote).foregroundStyle(.secondary)
@@ -87,6 +88,8 @@ struct ChatView: View {
 
 private struct MessageRow: View {
     var message: ChatMessage
+    var canUndo = false
+    var undo: () -> Void = {}
 
     var body: some View {
         switch message.role {
@@ -109,10 +112,16 @@ private struct MessageRow: View {
                     .textSelection(.enabled)
             }
         case .notice:
-            Label(message.text, systemImage: "info.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
+            HStack(spacing: 8) {
+                Label(message.text, systemImage: "info.circle")
+                    .foregroundStyle(.secondary)
+                if canUndo {
+                    Button("Undo", action: undo)
+                        .buttonStyle(.borderless)
+                }
+            }
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }

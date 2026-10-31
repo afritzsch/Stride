@@ -60,6 +60,22 @@ nonisolated struct TrainingIndicators: Sendable {
 
     /// Training minutes per zone over the last 28 days.
     var zoneMinutes28: [IntensityZone: Double] = [:]
+
+    /// The fatigue signals the weekly instructions name, over the last 7 days: load ratio above 1.3, resting HR
+    /// more than 3 bpm above baseline, HRV 10% or more below baseline, under 7 h of sleep. Empty when recovered.
+    var fatigueSignals: [String] {
+        let num = PromptBuilder.num
+        var signals: [String] = []
+        if let acwr, acwr > 1.3 { signals.append("load ratio \(num(acwr, 2))") }
+        if let restingHR7, let restingHR28, restingHR7 - restingHR28 > 3 {
+            signals.append("resting HR \(num(restingHR7 - restingHR28, 0)) bpm above baseline")
+        }
+        if let hrv7, let hrv28, hrv28 > 0, hrv7 <= hrv28 * 0.9 {
+            signals.append("HRV \(Int(((1 - hrv7 / hrv28) * 100).rounded()))% below baseline")
+        }
+        if let sleep7, sleep7 < 7 { signals.append("sleep \(num(sleep7, 1)) h a night") }
+        return signals
+    }
 }
 
 /// Derived training metrics. Load uses Banister's TRIMP from average workout heart rate.

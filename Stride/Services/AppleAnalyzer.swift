@@ -38,8 +38,15 @@ nonisolated struct AppleAnalyzer {
         var fallbackReason: String?
     }
 
-    /// Tokens kept free in the on-device context window for the generated report.
-    private static let outputReserve = 2000
+    /// Tokens kept free in the on-device context window for the generated report. Every request is capped at it
+    /// (`GenerationOptions.maximumResponseTokens`), so the room the fit check keeps is enforced, not hoped for.
+    static let outputReserve = 2000
+
+    /// Prose: the model's default sampling.
+    static let writing = GenerationOptions(maximumResponseTokens: outputReserve)
+    /// Plans, plan repairs and adjustments: following the rules matters more than variety. Low temperature rather
+    /// than greedy, which can loop on small models.
+    static let precise = GenerationOptions(temperature: 0.3, maximumResponseTokens: outputReserve)
 
     /// Creating `PrivateCloudComputeLanguageModel` traps unless the app is signed with the
     /// `com.apple.developer.private-cloud-compute` entitlement, which free Personal Teams can't get.
@@ -106,6 +113,7 @@ nonisolated struct AppleAnalyzer {
         instructions: String,
         fullPrompt: String,
         compactPrompt: String,
+        options: GenerationOptions = writing,
         onPartial: PartialHandler<Output>? = nil
     ) async throws -> Result<Output> {
         var fallbackReason: String?
@@ -120,6 +128,7 @@ nonisolated struct AppleAnalyzer {
                         model: PrivateCloudComputeLanguageModel(),
                         instructions: instructions,
                         prompts: [fullPrompt, compactPrompt],
+                        options: options,
                         onPartial: onPartial
                     )
                     return Result(report: report, route: .privateCloud)
@@ -141,7 +150,9 @@ nonisolated struct AppleAnalyzer {
         let prompts = await Self.fitsOnDevice(Output.self, instructions: instructions, prompt: fullPrompt)
             ? [fullPrompt, compactPrompt]
             : [compactPrompt]
-        let report: Output = try await Self.respond(model: SystemLanguageModel.default, instructions: instructions, prompts: prompts, onPartial: onPartial)
+        let report: Output = try await Self.respond(
+            model: SystemLanguageModel.default, instructions: instructions, prompts: prompts, options: options, onPartial: onPartial
+        )
         return Result(report: report, route: .onDevice, fallbackReason: fallbackReason)
     }
 
@@ -150,6 +161,7 @@ nonisolated struct AppleAnalyzer {
         model: some LanguageModel,
         instructions: String,
         prompts: [String],
+        options: GenerationOptions,
         onPartial: PartialHandler<Output>?
     ) async throws -> Output {
         for (index, prompt) in prompts.enumerated() {
@@ -157,7 +169,7 @@ nonisolated struct AppleAnalyzer {
             do {
                 // Stream so the UI can show the report as it's written; the on-device model is slow enough to notice.
                 var final: GeneratedContent?
-                for try await snapshot in session.streamResponse(to: prompt, generating: Output.self) {
+                for try await snapshot in session.streamResponse(to: prompt, generating: Output.self, options: options) {
                     final = snapshot.rawContent
                     if let onPartial { await onPartial(snapshot.content) }
                 }

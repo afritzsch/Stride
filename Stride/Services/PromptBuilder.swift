@@ -13,6 +13,9 @@ nonisolated struct PromptBuilder {
     var reviews: [UUID: SavedRunAnalysis] = [:]
     /// Days the athlete planned themselves. They count for plan vs actual, and the new plan keeps them.
     var athleteDays: [AthletePlanDay] = []
+    /// The latest readiness adjustment (a lighter session suggested on a low-recovery morning) and what the athlete
+    /// did with it.
+    var adjustment: SavedAdjustment? = nil
     /// Free time and rain per plan day (`SessionScheduler.availabilityLine`), empty when the calendar isn't used.
     var availability: [String] = []
     /// What to write: the whole report, or one of the two steps used when it doesn't fit the context window.
@@ -27,38 +30,57 @@ nonisolated struct PromptBuilder {
         case plan(assessment: String)
     }
 
-    static let instructions = """
-        You are an experienced endurance coach and sleep and recovery specialist. You are reviewing an athlete's \
-        wearable data from Apple Health and helping them plan better.
+    /// Instructions for the whole report in one request.
+    static var instructions: String { instructions(for: .report) }
 
-        Rules:
-        - Base every insight on the numbers provided and cite them (e.g. "resting HR 55 vs 51 bpm 4-week average").
-        - If a metric is missing ("–"), say the data is unavailable. Don't invent values.
-        - Recommendations must be concrete: what, when, how much.
-        - The 7-day plan must fit the athlete's available training days and weekly hours, keep at least one easy day \
-        between hard sessions, and include rest days.
-        - Adjust load to fatigue signals: ACWR above 1.3, resting HR more than 3 bpm above baseline, HRV well below \
-        baseline, or under 7 h of sleep mean reduce intensity or volume. ACWR below 0.8 with good recovery means \
-        there is room to build gradually (about 10% per week at most).
-        - If there is a goal event, periodize toward it using the weeks remaining (base, build, peak, then a taper \
-        in the final 1–2 weeks).
-        - Cover only the athlete's selected focus areas, but always produce the full 7-day plan.
-        - LAST PLAN VS ACTUAL shows how your previous plan went. Build on it: repeat a missed key session only \
-        if recovery allows, never cram missed work into the new week, and if sessions keep being missed or changed, \
-        make the plan fit the athlete's real routine.
-        - SESSION FEEDBACK holds the athlete's own words after sessions. Take pain, illness or unusual fatigue \
-        seriously and adjust the plan for it.
-        - THE ATHLETE'S OWN PLAN lists days the athlete already planned: copy them exactly into the plan and plan \
-        the other days around them, including rest and hard-easy spacing.
-        - FREE TIME shows open time in the athlete's calendar and the forecast: put long sessions on days with \
-        enough free time, and outdoor sessions away from rain when you can.
-        - COACH LOG lists your earlier verdicts. Stay consistent with them unless the data changed, and then say \
-        what changed.
-        - Body weight is context, not a target: mention it only when it matters for training (e.g. a fast drop \
-        alongside rising load can mean under-fueling). Don't give dieting advice.
-        - You are not a doctor. If the data suggests a medical concern, recommend seeing a professional.
-        - Address the athlete as "you". Be direct and concise.
-        """
+    /// Each step gets only the rules it needs: the iPhone's window is 4096 tokens, and every rule the assessment
+    /// doesn't use (or the plan doesn't) is room the brief can't have.
+    static func instructions(for part: Part) -> String {
+        var rules = commonRules
+        switch part {
+        case .report: rules += assessmentRules + planRules
+        case .assessment: rules += assessmentRules
+        case .plan: rules += planRules
+        }
+        let task = switch part {
+        case .report, .assessment: "You are reviewing an athlete's wearable data from Apple Health and helping them plan better."
+        case .plan: "You are writing the athlete's 7-day training plan from their wearable data and your assessment of it."
+        }
+        return """
+            You are an experienced endurance coach and sleep and recovery specialist. \(task)
+
+            Rules:
+            \((rules + closingRules).map { "- \($0)" }.joined(separator: "\n"))
+            """
+    }
+
+    private static let commonRules = [
+        "Base every insight on the numbers provided and cite them (e.g. \"resting HR 55 vs 51 bpm 4-week average\"). If a metric is missing (\"–\"), say the data is unavailable. Don't invent values.",
+        "Adjust load to fatigue signals: ACWR above 1.3, resting HR more than 3 bpm above baseline, HRV well below baseline, or under 7 h of sleep mean reduce intensity or volume. ACWR below 0.8 with good recovery means there is room to build gradually (about 10% per week at most).",
+        "If there is a goal event, periodize toward it using the weeks remaining (base, build, peak, then a taper in the final 1–2 weeks).",
+        "SESSION FEEDBACK holds the athlete's own words after sessions. Take pain, illness or unusual fatigue seriously and adjust the plan for it.",
+    ]
+
+    private static let assessmentRules = [
+        "Use the training status computed in the brief and explain it from the numbers.",
+        "Recommendations must be concrete: what, when, how much.",
+        "Cover only the athlete's selected focus areas.",
+        "LAST PLAN VS ACTUAL shows how your previous plan went, and READINESS ADJUSTMENTS whether the athlete took the lighter sessions you suggested. If sessions keep being missed or changed, say so and suggest a plan that fits their real routine.",
+        "COACH LOG lists your earlier verdicts. Stay consistent with them unless the data changed, and then say what changed.",
+        "Body weight is context, not a target: mention it only when it matters for training (e.g. a fast drop alongside rising load can mean under-fueling). Don't give dieting advice.",
+    ]
+
+    private static let planRules = [
+        "Always write the full 7-day plan. It must stay within PLAN LIMIT, the athlete's training days and weekly hours, keep at least one easy day between hard sessions, and include rest days.",
+        "Build on LAST PLAN VS ACTUAL: repeat a missed key session only if recovery allows, never cram missed work into the new week, and if sessions keep being missed or changed, make the plan fit the athlete's real routine.",
+        "THE ATHLETE'S OWN PLAN lists days the athlete already planned: copy them exactly into the plan and plan the other days around them, including rest and hard-easy spacing.",
+        "FREE TIME shows open time in the athlete's calendar and the forecast: put long sessions on days with enough free time, and outdoor sessions away from rain when you can.",
+    ]
+
+    private static let closingRules = [
+        "You are not a doctor. If the data suggests a medical concern, recommend seeing a professional.",
+        "Address the athlete as \"you\". Be direct and concise.",
+    ]
 
     var prompt: String {
         var lines: [String] = []
@@ -89,6 +111,7 @@ nonisolated struct PromptBuilder {
 
         lines.append("")
         lines.append("KEY INDICATORS (load = Banister TRIMP from avg HR)")
+        lines.append("- Training status (computed from load and recovery): \(TrainingStatus.measured(metrics, now: snapshot.fetchedAt, calendar: calendar).rawValue)")
         lines.append("- Load last 7 d: \(Self.num(ind.acuteLoad, 0)); avg weekly last 28 d: \(Self.num(ind.chronicLoad, 0)); ACWR: \(Self.num(ind.acwr, 2))")
         lines.append("- Monotony (7 d): \(Self.num(ind.monotony, 1)); consecutive training days: \(ind.consecutiveTrainingDays)")
         lines.append("- Resting HR 7 d / 28 d: \(Self.num(ind.restingHR7, 0)) / \(Self.num(ind.restingHR28, 0)) bpm")
@@ -171,6 +194,14 @@ nonisolated struct PromptBuilder {
             lines.append("FREE TIME (day | free time in the calendar, from the athlete's earliest to latest training time | weather)")
             lines += availability
         }
+        if plans {
+            // The limit the plan is checked against afterwards (`PlanCheck`), so the model can meet it the first time.
+            let context = PlanContext(metrics: metrics, profile: profile, planStart: planStart, calendar: calendar)
+            if let limit = PlanCheck.minuteLimits(profile: profile, context: context).min(by: { $0.minutes < $1.minutes }) {
+                lines.append("")
+                lines.append("PLAN LIMIT: at most \(limit.minutes) min of training in total\(context.goalIndex(days: 7) != nil ? " (not counting the goal day)" : ""), because \(limit.reason).")
+            }
+        }
         let labels = Self.planLabels(start: planStart, calendar: calendar)
         let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar).sorted { $0.key < $1.key }
         if plans, !pinned.isEmpty {
@@ -242,6 +273,17 @@ nonisolated struct PromptBuilder {
                     Self.quote(review.note),
                 ].joined(separator: " | "))
             }
+        }
+
+        if let adjustment, adjustment.state != .suggested, adjustment.date >= since {
+            lines.append("")
+            lines.append("READINESS ADJUSTMENTS (day | planned | you suggested | athlete)")
+            lines.append([
+                Self.dayLabel(adjustment.date, calendar: calendar),
+                adjustment.original.briefDescription,
+                adjustment.adjustment.session.briefDescription,
+                adjustment.state == .accepted ? "took the lighter session" : "kept the planned session",
+            ].joined(separator: " | "))
         }
 
         // One verdict per week (the newest), so re-running an analysis doesn't crowd out older weeks.

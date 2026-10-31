@@ -3,7 +3,7 @@ import Foundation
 /// What the coach's tools can read and change, on the main actor where the app's state lives. Each method answers
 /// with plain text for the model; without a chat, tools run silently (the debug state dump uses this).
 @MainActor
-final class CoachToolbox {
+final class CoachToolbox: CoachToolAnswering {
     private weak var model: AppModel?
     private weak var chat: CoachChat?
 
@@ -195,7 +195,7 @@ final class CoachToolbox {
         chat?.setActivity("Checking your plan…")
         guard let model else { return "No plan." }
         let rows = Self.days(7).enumerated().map { offset, date -> String in
-            let marker = offset == 0 ? " (today)" : ""
+            let marker = [0: " (today)", 1: " (tomorrow)"][offset] ?? ""
             guard let day = model.plannedSession(on: date) else { return "\(label(date))\(marker) | no plan" }
             return "\(label(date))\(marker) | \(day.briefDescription) | \(day.details)"
         }
@@ -218,13 +218,18 @@ final class CoachToolbox {
         }
         var day = PlanCheck.normalized([day], labels: [day.day])[0]
         day.day = label(date)
-        model.updatePlannedDay(on: date, with: day)
-        chat?.notice("Plan changed: \(day.day) is now \(day.isRest ? "a rest day" : "\(day.session), \(day.durationMinutes) min").")
+        // Saved as the athlete's own day: they asked for it, so the next weekly plan keeps it.
+        let previous = model.trainingPlan.athleteDay(on: date)?.day
+        model.setAthleteDay(day, on: date)
+        chat?.change("Plan changed: \(day.day) is now \(day.isRest ? "a rest day" : "\(day.session), \(day.durationMinutes) min").") { [weak model] in
+            if let previous { model?.setAthleteDay(previous, on: date) } else { model?.removeAthleteDay(on: date) }
+        }
 
-        // Check the week around the change against the athlete's limits.
+        // Check the week around the change against the athlete's limits and recent training.
         let plan = week.compactMap { model.plannedSession(on: $0) }
         let labels = week.map(label)
-        let problems = plan.count == 7 ? PlanCheck.problems(plan, labels: labels, profile: model.profile) : []
+        let context = model.metrics.map { PlanContext(metrics: $0, profile: model.profile, planStart: week[0]) }
+        let problems = plan.count == 7 ? PlanCheck.problems(plan, labels: labels, profile: model.profile, context: context) : []
         return problems.isEmpty
             ? "Saved \(day.day): \(day.briefDescription)."
             : "Saved \(day.day): \(day.briefDescription). The next 7 days now break these rules: \(problems.joined(separator: " ")) Tell the athlete, and fix it if they agree."
@@ -303,13 +308,22 @@ final class CoachToolbox {
         if let clash = schedule.busy.first(where: { !$0.isSession && $0.start < end && $0.end > startDate }) {
             return "That overlaps \(clash.title.isEmpty ? "an event" : clash.title) (\(SessionScheduler.time(clash.start, calendar: calendar))–\(SessionScheduler.time(clash.end, calendar: calendar))). Pick a time from freeTimes."
         }
+        let day = calendar.startOfDay(for: date)
+        let previousStart = schedule.busy.first { $0.sessionDate == day }?.start
         do {
             try schedule.add(session, on: date, at: startDate)
         } catch {
             return "Couldn't add it: \(error.localizedDescription)"
         }
         let range = "\(SessionScheduler.time(startDate, calendar: calendar))–\(SessionScheduler.time(end, calendar: calendar))"
-        chat?.notice("Added to your calendar: \(session.session), \(label) \(range).")
+        chat?.change("Added to your calendar: \(session.session), \(label) \(range).") { [weak model] in
+            guard let model else { return }
+            do {
+                if let previousStart { try model.schedule.add(session, on: date, at: previousStart) } else { try model.schedule.removeSession(on: date) }
+            } catch {
+                model.debugLog("Undoing the calendar change failed: \(error)")
+            }
+        }
         return "Added \(session.session) on \(label) \(range) to the athlete's calendar."
     }
 
