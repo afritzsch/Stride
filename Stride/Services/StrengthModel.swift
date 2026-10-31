@@ -1,6 +1,12 @@
 import Foundation
 import Observation
 
+nonisolated enum HevyConnectError: LocalizedError {
+    case keychainWriteFailed
+
+    var errorDescription: String? { "Stride couldn't store the API key in the Keychain." }
+}
+
 /// The athlete's lifting log from Hevy, when connected: exercises, sets and weights that Apple Health never gets.
 /// Without it, strength screens fall back to what the watch records (time and heart rate). Demo data comes with
 /// a made-up log (`DemoStrength`) unless launched with `-demoHevy NO`.
@@ -80,7 +86,7 @@ final class StrengthModel {
     func connect(apiKey: String) async throws {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let account = try await HevyClient(apiKey: key).account()
-        HevyKeychain.save(key)
+        guard HevyKeychain.save(key) else { throw HevyConnectError.keychainWriteFailed }
         isConnected = true
         accountName = account.name
         UserDefaults.standard.set(account.name, forKey: DefaultsKey.hevyAccountName)

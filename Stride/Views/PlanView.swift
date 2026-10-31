@@ -56,11 +56,11 @@ struct PlanView: View {
                 .task {
                     #if DEBUG
                     // -scrollTo adherence and -planSheet week | edit:<day> | time:<day> (see AppModel+Debug).
-                    if let target = UserDefaults.standard.string(forKey: "scrollTo") {
+                    if let target = UserDefaults.standard.string(forKey: DefaultsKey.scrollTo) {
                         try? await Task.sleep(for: .milliseconds(300))
                         proxy.scrollTo(target, anchor: .top)
                     }
-                    if let sheet = UserDefaults.standard.string(forKey: "planSheet") {
+                    if let sheet = UserDefaults.standard.string(forKey: DefaultsKey.planSheet) {
                         let parts = sheet.split(separator: ":").map(String.init)
                         let date = dates[min(max(Int(parts.last ?? "") ?? 0, 0), dates.count - 1)]
                         switch parts.first {
