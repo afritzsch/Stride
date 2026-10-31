@@ -14,6 +14,7 @@ import FoundationModels
 ///   -demoHevy NO          demo data without its made-up Hevy log, to see the strength screens from watch data only
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
+///   -debugState YES       also write Documents/debug-state.json on a device (always written in the Simulator)
 ///   -probeModel YES       ask the on-device model for one word whatever `availability` says; writes Documents/model-probe.json
 extension AppModel {
     static func loadFixture() -> HealthFixture? {
@@ -81,10 +82,10 @@ extension AppModel {
         #if DEBUG
         guard UserDefaults.standard.bool(forKey: DefaultsKey.exportFixture) else { return }
         do {
-            let url = try await exportHealthData()
+            let url = try await exportHealthData(includeRoutes: true)
             let target = URL.documentsDirectory.appending(path: "export.json")
             try? FileManager.default.removeItem(at: target)
-            try FileManager.default.copyItem(at: url, to: target)
+            try FileManager.default.moveItem(at: url, to: target)
         } catch {
             print("Stride: export failed: \(error)")
         }

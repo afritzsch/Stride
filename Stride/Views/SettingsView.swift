@@ -104,6 +104,7 @@ struct SettingsView: View {
 private struct DataSection: View {
     @Environment(AppModel.self) private var model
     @State private var exportURL: URL?
+    @State private var exportIncludesRoutes = false
     @State private var isExporting = false
     @State private var exportError: String?
 
@@ -117,12 +118,14 @@ private struct DataSection: View {
                     Task { await model.connectHealth() }
                 }
             }
+            Toggle("Include GPS routes", isOn: $exportIncludesRoutes)
+                .onChange(of: exportIncludesRoutes) { discardExport() }
             Button {
                 Task {
                     isExporting = true
                     defer { isExporting = false }
                     do {
-                        exportURL = try await model.exportHealthData()
+                        exportURL = try await model.exportHealthData(includeRoutes: exportIncludesRoutes)
                         exportError = nil
                     } catch {
                         exportError = error.localizedDescription
@@ -135,7 +138,7 @@ private struct DataSection: View {
                 }
             }
             .disabled(isExporting)
-            if let exportURL {
+            if let exportURL, FileManager.default.fileExists(atPath: exportURL.path()) {
                 ShareLink(item: exportURL) {
                     Label("Share export file", systemImage: "square.and.arrow.up")
                 }
@@ -146,8 +149,14 @@ private struct DataSection: View {
         } header: {
             Text("Data")
         } footer: {
-            Text("The debug export contains your raw health data for the last \(HealthKitService.windowWeeks) weeks. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
+            Text("The debug export contains your raw health data for the last \(HealthKitService.windowWeeks) weeks\(exportIncludesRoutes ? ", including GPS routes that show where you live and train" : "") and is deleted when you leave Settings. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
         }
+        .onChange(of: model.selectedTab) { if model.selectedTab != .settings { discardExport() } }
+    }
+
+    private func discardExport() {
+        AppModel.deleteHealthExport()
+        exportURL = nil
     }
 }
 

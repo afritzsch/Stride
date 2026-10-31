@@ -100,7 +100,7 @@ private struct MessageRow: View {
                 .padding(.leading, 48)
         case .coach:
             if !message.text.isEmpty {
-                Text(LocalizedStringKey(message.text))
+                Text(AttributedString(coachMarkdown: message.text))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(.background.secondary, in: .rect(cornerRadius: 18))
@@ -129,5 +129,17 @@ private struct FlowSuggestions: View {
                     .font(.subheadline)
             }
         }
+    }
+}
+
+extension AttributedString {
+    /// The coach's reply with its inline Markdown (bold, italics), but without links: the coach reads calendar
+    /// titles and Hevy notes, which other people can write, so a link in a reply can't be trusted.
+    init(coachMarkdown text: String) {
+        var string = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+        let linked = string.runs.filter { $0.link != nil }.map(\.range)
+        for range in linked { string[range].link = nil }
+        self = string
     }
 }

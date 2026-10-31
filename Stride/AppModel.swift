@@ -173,6 +173,8 @@ final class AppModel {
         fixture = Self.loadFixture()
         #endif
         Self.removeClaudeSettings()
+        Self.deleteHealthExport()
+        Self.removeUnwantedDebugState()
     }
 
     /// Earlier versions could use Claude with the user's own Anthropic key; don't leave that key behind.

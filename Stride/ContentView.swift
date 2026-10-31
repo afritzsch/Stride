@@ -23,6 +23,10 @@ struct ContentView: View {
                 SettingsView()
             }
         }
+        .onChange(of: model.selectedTab) { old, _ in
+            // The Settings view may not be loaded any more, so the debug export is dropped here too.
+            if old == .settings { AppModel.deleteHealthExport() }
+        }
         .task {
             await model.refresh()
             model.applyLaunchRoute()
