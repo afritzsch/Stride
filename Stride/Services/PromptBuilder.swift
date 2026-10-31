@@ -71,7 +71,7 @@ nonisolated struct PromptBuilder {
         if profile.hasGoal {
             let weeks = max(0, calendar.dateComponents([.day], from: snapshot.fetchedAt, to: profile.goalDate).day ?? 0) / 7
             let target = profile.goalTarget.isEmpty ? "" : ", target: \(profile.goalTarget)"
-            lines.append("- Goal: \(profile.goalName.isEmpty ? "event" : profile.goalName) on \(Self.dayLabel(profile.goalDate, calendar: calendar)) (\(weeks) weeks away\(target))")
+            lines.append("- Goal: \(Self.goalTitle(profile)) on \(Self.dayLabel(profile.goalDate, calendar: calendar)) (\(weeks) weeks away\(target))")
         } else {
             lines.append("- Goal: none set (general fitness)")
         }
@@ -253,16 +253,49 @@ nonisolated struct PromptBuilder {
 
     /// "Mon 27 Oct": no commas, so labels can be listed unambiguously.
     static func dayLabel(_ date: Date, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "EEE d MMM"
-        return formatter.string(from: date)
+        dayLabelFormatters.string(from: date, calendar: calendar)
     }
+
+    /// The goal's name, or "event" when it has none.
+    static func goalTitle(_ profile: UserProfile) -> String {
+        profile.goalName.isEmpty ? "event" : profile.goalName
+    }
+
+    /// "Half marathon on Sun 12 Apr, target 1:45", for a profile that `hasGoal`.
+    static func goalSummary(_ profile: UserProfile, calendar: Calendar) -> String {
+        let target = profile.goalTarget.isEmpty ? "" : ", target \(profile.goalTarget)"
+        return "\(goalTitle(profile)) on \(dayLabel(profile.goalDate, calendar: calendar))\(target)"
+    }
+
+    /// Day labels are made hundreds of times per prompt and per screen, and creating a `DateFormatter` is expensive.
+    private static let dayLabelFormatters = DayLabelFormatters()
 
     static func num(_ value: Double?, _ digits: Int) -> String {
         guard let value, value.isFinite else { return "–" }
         return value.formatted(.number.precision(.fractionLength(digits)).grouping(.never).locale(Locale(identifier: "en_US_POSIX")))
+    }
+}
+
+/// One "EEE d MMM" formatter per calendar and time zone, shared by every caller.
+private nonisolated final class DayLabelFormatters: @unchecked Sendable {
+    private let lock = NSLock()
+    private var formatters: [String: DateFormatter] = [:]
+
+    func string(from date: Date, calendar: Calendar) -> String {
+        let key = "\(calendar.identifier)|\(calendar.timeZone.identifier)"
+        lock.lock()
+        defer { lock.unlock() }
+        let formatter: DateFormatter
+        if let cached = formatters[key] {
+            formatter = cached
+        } else {
+            formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.calendar = calendar
+            formatter.timeZone = calendar.timeZone
+            formatter.dateFormat = "EEE d MMM"
+            formatters[key] = formatter
+        }
+        return formatter.string(from: date)
     }
 }

@@ -31,14 +31,14 @@ final class StrengthModel {
         let connected = HevyKeychain.load() != nil
         isConnected = connected
         let defaults = UserDefaults.standard
-        accountName = defaults.string(forKey: Keys.account)
-        lastSync = defaults.object(forKey: Keys.lastSync) as? Date
+        accountName = defaults.string(forKey: DefaultsKey.hevyAccountName)
+        lastSync = defaults.object(forKey: DefaultsKey.hevyLastSync) as? Date
         logged = connected ? JSONStore.load([StrengthSession].self, from: JSONStore.hevyWorkouts) ?? [] : []
     }
 
     var source: Source {
         if model?.snapshot?.isDemo == true {
-            return UserDefaults.standard.object(forKey: "demoHevy") == nil || UserDefaults.standard.bool(forKey: "demoHevy") ? .demo : .none
+            return UserDefaults.standard.bool(forKey: DefaultsKey.demoHevy, default: true) ? .demo : .none
         }
         return isConnected ? .hevy : .none
     }
@@ -83,7 +83,7 @@ final class StrengthModel {
         HevyKeychain.save(key)
         isConnected = true
         accountName = account.name
-        UserDefaults.standard.set(account.name, forKey: Keys.account)
+        UserDefaults.standard.set(account.name, forKey: DefaultsKey.hevyAccountName)
         logged = []
         setLastSync(nil)
         await sync(force: true)
@@ -96,7 +96,7 @@ final class StrengthModel {
         syncError = nil
         logged = []
         setLastSync(nil)
-        UserDefaults.standard.removeObject(forKey: Keys.account)
+        UserDefaults.standard.removeObject(forKey: DefaultsKey.hevyAccountName)
         JSONStore.delete(JSONStore.hevyWorkouts)
     }
 
@@ -118,7 +118,9 @@ final class StrengthModel {
                 logged = try await readHistory(client: client)
             }
             guard isConnected else { return }
-            JSONStore.save(logged, to: JSONStore.hevyWorkouts)
+            if !JSONStore.save(logged, to: JSONStore.hevyWorkouts) {
+                model?.debugLog("Couldn't cache the Hevy workouts; they'll be read again next launch.")
+            }
             setLastSync(started)
             model?.debugLog("Hevy sync: \(logged.count) workouts")
         } catch {
@@ -160,11 +162,6 @@ final class StrengthModel {
 
     private func setLastSync(_ date: Date?) {
         lastSync = date
-        UserDefaults.standard.set(date, forKey: Keys.lastSync)
-    }
-
-    private enum Keys {
-        static let account = "hevyAccountName"
-        static let lastSync = "hevyLastSync"
+        UserDefaults.standard.set(date, forKey: DefaultsKey.hevyLastSync)
     }
 }
