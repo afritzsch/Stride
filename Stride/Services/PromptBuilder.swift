@@ -201,7 +201,9 @@ nonisolated struct PromptBuilder {
             lines.append("Summary: \(PlanAdherence.summary(of: adherence))")
         }
 
-        let since = calendar.date(byAdding: .day, value: compact ? -7 : -14, to: snapshot.fetchedAt) ?? snapshot.fetchedAt
+        // Whole days, so a session from a week ago counts whatever time of day the analysis runs.
+        let today = calendar.startOfDay(for: snapshot.fetchedAt)
+        let since = calendar.date(byAdding: .day, value: compact ? -7 : -14, to: today) ?? today
         let feedback = snapshot.workouts.reversed()
             .filter { $0.start >= since }
             .compactMap { workout in reviews[workout.id].map { (workout, $0) } }
