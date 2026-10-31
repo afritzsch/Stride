@@ -34,6 +34,7 @@ struct DashboardView: View {
                             }
                             MetricLink(metric: .restingHR) { RecoveryChart(days: Array(snapshot.days.suffix(28))) }
                             WeightCard(days: snapshot.days, indicators: metrics.indicators)
+                            StrengthDashboardCard()
                             RecentWorkouts(workouts: Array(snapshot.workouts.suffix(8).reversed()))
                         }
                     } else if model.isLoadingHealth {
@@ -48,11 +49,18 @@ struct DashboardView: View {
                 case .allWorkouts: WorkoutListView()
                 case .workout(let workout): WorkoutDetailView(workout: workout)
                 case .metric(let metric): MetricDetailView(metric: metric)
+                case .strength: StrengthView()
+                case .strengthSession(let session): StrengthSessionView(session: session)
                 }
             }
-            .refreshable { await model.refresh() }
+            .refreshable {
+                await model.refresh()
+                await model.strength.sync(force: true)
+            }
             .task(id: model.snapshot?.fetchedAt) {
                 await model.schedule.refresh()
+                // Before reviews, so a new gym session is reviewed with its exercises.
+                await model.strength.sync()
                 await model.adjustTodayIfNeeded(automatically: true)
                 await model.reviewNewWorkouts()
             }

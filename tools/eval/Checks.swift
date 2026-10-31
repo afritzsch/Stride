@@ -13,6 +13,7 @@ func runOfflineChecks() async {
     checkSessionScheduler()
     checkForecastParsing()
     await checkAthletePlan()
+    checkStrength()
 }
 
 /// Analyses saved by earlier versions (with an `engine`, before `modelName`, `sport` and `targetZone`) still load.

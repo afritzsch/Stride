@@ -9,6 +9,8 @@ enum AppTab: String, Hashable {
 enum DashboardDestination: Hashable {
     case allWorkouts
     case workout(WorkoutSummary)
+    case strength
+    case strengthSession(StrengthSession)
     case metric(DashboardMetric)
 }
 
@@ -73,6 +75,8 @@ final class AppModel {
     @ObservationIgnored private(set) lazy var chat = CoachChat(model: self)
     /// Suggested times for planned sessions, from the calendar and the forecast.
     @ObservationIgnored private(set) lazy var schedule = ScheduleModel(model: self)
+    /// The Hevy lifting log, when connected.
+    @ObservationIgnored private(set) lazy var strength = StrengthModel(model: self)
     private(set) var adjustmentError: String?
 
     var selectedTab = AppTab.dashboard
@@ -384,6 +388,8 @@ final class AppModel {
         guard analyzingWorkoutIDs.insert(id).inserted else { return nil }
         defer { analyzingWorkoutIDs.remove(id) }
 
+        let strengthSession = strength.session(for: detail.summary)
+        let strengthHistory = strength.sessions ?? []
         func prompt(compact: Bool) -> String {
             RunPromptBuilder(
                 detail: detail,
@@ -392,7 +398,9 @@ final class AppModel {
                 profile: profile,
                 plannedSession: plannedSession(on: detail.summary.start),
                 note: note,
-                compact: compact
+                compact: compact,
+                strengthSession: strengthSession,
+                strengthHistory: strengthHistory
             ).prompt
         }
         defer { runPreviews[id] = nil }
@@ -574,8 +582,4 @@ final class AppModel {
         static let autoReview = "autoReviewWorkouts"
         static let autoReviewAttempted = "autoReviewAttempted"
     }
-}
-
-extension String {
-    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

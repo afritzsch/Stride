@@ -234,7 +234,8 @@ final class CoachToolbox {
             var brief = RunPromptBuilder(
                 detail: detail, snapshot: snapshot, metrics: metrics, profile: model.profile,
                 plannedSession: model.plannedSession(on: workout.start),
-                note: model.runAnalyses[workout.id]?.note ?? "", compact: true
+                note: model.runAnalyses[workout.id]?.note ?? "", compact: true,
+                strengthSession: model.strength.session(for: workout), strengthHistory: model.strength.sessions ?? []
             ).prompt
             if let review = model.runAnalyses[workout.id] {
                 brief += "\n\nYOUR EARLIER REVIEW: \(review.analysis.headline) " + review.analysis.summary.joined(separator: " ")
