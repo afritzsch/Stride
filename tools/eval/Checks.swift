@@ -14,6 +14,7 @@ func runOfflineChecks() async {
     checkForecastParsing()
     await checkAthletePlan()
     checkStrength()
+    checkProgress()
 }
 
 /// Analyses saved by earlier versions (with an `engine`, before `modelName`, `sport` and `targetZone`) still load.
@@ -96,7 +97,7 @@ func checkPlanAdherence() {
         switch (weekday(offset), day.planned.sport) {
         case (_, _) where offset == 0:
             check(day.status == .pending, "today is pending")
-        case (6, _): // Friday: no demo workout
+        case (6, _) where !day.planned.isRest: // Friday: no demo workout
             check(day.status == .missed, "Friday's run missed, got \(day.status)")
         case (_, PlannedDay.rest) where !day.workouts.isEmpty:
             check(day.status == .extra, "workout on a rest day is extra")

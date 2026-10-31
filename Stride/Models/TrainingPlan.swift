@@ -44,8 +44,8 @@ nonisolated extension PlannedDay {
     /// "Easy run", "Hard ride", "Strength": a title for a day the athlete planned without naming it.
     var defaultTitle: String {
         guard !isRest else { return Self.rest }
-        let nouns = ["Running": "run", "Cycling": "ride", "Swimming": "swim", "Walking": "walk", "Hiking": "hike", "Rowing": "row"]
+        let nouns = [Sport.running: "run", Sport.cycling: "ride", Sport.swimming: "swim", Sport.walking: "walk", Sport.hiking: "hike", "Rowing": "row"]
         if let noun = nouns[sport] { return "\(intensity.rawValue.capitalized) \(noun)" }
-        return sport.isEmpty || sport == "Other" ? "\(intensity.rawValue.capitalized) session" : sport
+        return sport.isEmpty || sport == Sport.other ? "\(intensity.rawValue.capitalized) session" : sport
     }
 }
