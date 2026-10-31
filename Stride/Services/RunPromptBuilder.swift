@@ -11,7 +11,14 @@ nonisolated struct RunPromptBuilder {
     var compact: Bool
     var calendar = Calendar.current
 
-    static let instructions = """
+    static func instructions(for kind: WorkoutKind) -> String {
+        switch kind {
+        case .endurance: enduranceInstructions + writing
+        case .strength: strengthInstructions + writing
+        }
+    }
+
+    private static let enduranceInstructions = """
         You are an experienced endurance coach reviewing one session your athlete just completed, using data \
         from their watch (synced through Apple Health).
 
@@ -29,6 +36,32 @@ nonisolated struct RunPromptBuilder {
         - Be practical: what went well, what to change, how to recover, and what the next session should be.
         - If a metric is missing ("–"), don't guess. Address the athlete as "you". Be direct and concise.
 
+        """
+
+    private static let strengthInstructions = """
+        You are an experienced strength and conditioning coach reviewing one strength, core or mobility session \
+        your athlete (an endurance athlete) just completed, using data from their watch (synced through Apple Health).
+
+        Rules:
+        - The watch records only time and heart rate for this kind of session: no exercises, sets, reps or \
+        weights. Don't invent them, and don't judge the lifting itself unless the athlete's note describes it.
+        - Heart rate rises during sets and drops during rest, and stays far below running heart rate. Low heart \
+        rate doesn't make it an easy, light or recovery session: use it only to describe the work and rest \
+        pattern. There is no pace in a gym session.
+        - Load is computed from heart rate, so it understates strength work; never call the session too light \
+        because of it.
+        - If a different sport was planned, say the athlete did this session instead and how that fits the week; \
+        don't judge it as the planned sport.
+        - Take context into account: recent load, last night's sleep, resting HR and HRV versus baseline, and \
+        how the session fits around their endurance training.
+        - Improvements are about this session or recovery, never running workouts like intervals or tempo. The \
+        next session can be any sport the plan or recovery calls for.
+        - Be practical: what went well, what to change, how to recover, and what the next session should be.
+        - If a metric is missing ("–"), don't guess. Address the athlete as "you". Be direct and concise.
+
+        """
+
+    private static let writing = """
         Writing:
         - Lists are bullet points: one short, plain point each, like a coach talking to the athlete. Never write \
         "Label: value" fragments, semicolon-separated lists, or copy lines from the brief.
@@ -75,13 +108,14 @@ nonisolated struct RunPromptBuilder {
         if let contact = detail.groundContactMs { extras.append("ground contact \(num(contact, 0)) ms") }
         if !extras.isEmpty { lines.append("- " + extras.joined(separator: ", ")) }
 
+        // Zones and a measured effort would tell the model a gym session was a recovery jog.
         let zones = detail.zoneSeconds(zones: metrics.heartRateZones)
         let zoneTotal = zones.reduce(0, +)
-        if zoneTotal > 0 {
+        if workout.kind == .endurance, zoneTotal > 0 {
             let shares = zones.enumerated().map { "Z\($0.offset + 1) \(Int(($0.element / zoneTotal * 100).rounded()))%" }
             lines.append("- Time in HR zones: \(shares.joined(separator: ", "))")
         }
-        if let effort = EffortLevel.measured(zoneSeconds: zones, durationMinutes: workout.durationMinutes) {
+        if workout.kind == .endurance, let effort = EffortLevel.measured(zoneSeconds: zones, durationMinutes: workout.durationMinutes) {
             let hard = Int(((zones[3] + zones[4]) / zoneTotal * 100).rounded())
             lines.append("- Measured effort: \(effort.rawValue) (\(hard)% of the time in Z4–Z5)")
         }
@@ -113,6 +147,9 @@ nonisolated struct RunPromptBuilder {
         if let plannedSession {
             lines.append("")
             lines.append("PLANNED FOR THIS DAY: \(plannedSession.briefDescription). \(plannedSession.details)")
+            if !plannedSession.isRest, !plannedSession.sport.isEmpty, plannedSession.sport != workout.sport {
+                lines.append("The athlete did \(workout.sport) instead of the planned \(plannedSession.sport).")
+            }
         }
         let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedNote.isEmpty {
@@ -149,7 +186,13 @@ nonisolated struct RunPromptBuilder {
         let previous = snapshot.workouts
             .filter { $0.sport == workout.sport && $0.start < workout.start }
             .suffix(compact ? 3 : 6)
-        if !previous.isEmpty {
+        if !previous.isEmpty, workout.kind == .strength {
+            lines.append("")
+            lines.append("PREVIOUS \(workout.sport.uppercased()) SESSIONS (date | min | avg HR)")
+            for session in previous {
+                lines.append([label(session.start), num(session.durationMinutes, 0), num(session.averageHeartRate, 0)].joined(separator: " | "))
+            }
+        } else if !previous.isEmpty {
             lines.append("")
             lines.append("PREVIOUS \(workout.sport.uppercased()) SESSIONS (date | min | km | pace | avg HR | load)")
             for session in previous {

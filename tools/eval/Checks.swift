@@ -4,6 +4,7 @@ import Foundation
 func runOfflineChecks() async {
     checkPlanAdherence()
     checkWeeklyPrompt()
+    checkWorkoutPrompt()
     checkPlanCheck()
     checkReadiness()
     checkRaceForecast()
@@ -132,6 +133,42 @@ func checkWeeklyPrompt() {
         check(!prompt.contains("| pending"), "\(name): today's pending day is left out")
         check(prompt.hasSuffix(scenario.planLabels.joined(separator: ", ") + "."), "\(name): ends with the plan labels")
     }
+}
+
+/// A gym session gets the strength coach, no heart-rate effort, and is told apart from the run it replaced.
+func checkWorkoutPrompt() {
+    section("Workout prompt")
+    let scenario = Scenario.demoWithHistory()
+    guard let gym = scenario.snapshot.workouts.last(where: { $0.sport == "Strength" }),
+          let run = scenario.snapshot.workouts.last(where: { $0.sport == "Running" }) else {
+        check(false, "demo data has a strength session and a run")
+        return
+    }
+    check(gym.kind == .strength && run.kind == .endurance, "sports map to their coach")
+    let easyRun = PlannedDay(
+        day: scenario.label(0), sport: "Running", intensity: .easy, session: "Easy run",
+        durationMinutes: 30, targetZone: 1, details: ""
+    )
+    func prompt(_ workout: WorkoutSummary) -> String {
+        RunPromptBuilder(
+            detail: DemoData.detail(for: workout), snapshot: scenario.snapshot, metrics: scenario.metrics,
+            profile: scenario.profile, plannedSession: easyRun, note: "", compact: false
+        ).prompt
+    }
+    let gymPrompt = prompt(gym), runPrompt = prompt(run)
+    check(!gymPrompt.contains("Measured effort") && !gymPrompt.contains("Time in HR zones"), "strength: no heart-rate effort or zones")
+    check(gymPrompt.contains("did Strength instead of the planned Running"), "strength: says it replaced the planned run")
+    check(!gymPrompt.contains("| km |"), "strength: previous sessions without distance and pace")
+    check(runPrompt.contains("Time in HR zones") && !runPrompt.contains("instead of the planned"), "run: zones, no sport swap")
+    check(RunPromptBuilder.instructions(for: .strength).contains("strength and conditioning coach"), "strength: own instructions")
+
+    let legacy = #"{"effort":"recovery","headline":"h","summary":"s","planComparison":"","highlights":[],"improvements":[],"recovery":"","nextSession":""}"#
+    let decoded = try? JSONDecoder().decode(RunAnalysis.self, from: Data(legacy.utf8))
+    check(decoded?.effort == .recovery && decoded?.summary == ["s"], "old reviews still decode")
+    var strengthReview = decoded
+    strengthReview?.effort = nil
+    let again = strengthReview.flatMap { try? JSONDecoder().decode(RunAnalysis.self, from: JSONEncoder().encode($0)) }
+    check(again != nil && again?.effort == nil, "reviews without an effort round-trip")
 }
 
 func checkPlanCheck() {

@@ -26,17 +26,18 @@ extension EffortLevel {
 @Generable
 nonisolated struct RunAnalysis: Codable, Hashable, Sendable {
     // Generated first so the headline follows from it; overwritten by `EffortLevel.measured` when HR allows.
+    // Nil for strength sessions, whose heart rate doesn't tell how hard they were.
     @Guide(description: "How hard the session actually was; use the measured effort from the brief when given")
-    var effort: EffortLevel
-    @Guide(description: "A short verdict of at most 12 words, e.g. \"Strong half marathon at threshold effort\"")
+    var effort: EffortLevel?
+    @Guide(description: "A short verdict of at most 12 words, e.g. \"Strong half marathon at threshold effort\" or \"Solid gym session before a long run\"")
     var headline: String
-    @Guide(description: "Short bullet points interpreting the session, each under 15 words: what kind of run it was, how pacing and heart rate behaved, what it means for training. The athlete already sees the stats, so don't list them", .count(2...4))
+    @Guide(description: "Short bullet points interpreting the session, each under 15 words: what kind of session it was, how pacing, effort and heart rate behaved, what it means for training. The athlete already sees the stats, so don't list them", .count(2...4))
     var summary: [String]
     @Guide(description: "One sentence on how the session compared to what was planned for that day, or an empty string if nothing was planned")
     var planComparison: String
-    @Guide(description: "What the athlete did well, each a short bullet point about their running", .count(1...3))
+    @Guide(description: "What the athlete did well in this session, each a short bullet point", .count(1...3))
     var highlights: [String]
-    @Guide(description: "Specific changes to pacing, training, fueling or recovery, each a short bullet point. Never about the watch or how data is recorded", .count(1...3))
+    @Guide(description: "Specific changes to the session, training, fueling or recovery, each a short bullet point. Never about the watch or how data is recorded", .count(1...3))
     var improvements: [String]
     @Guide(description: "1-2 sentences of recovery advice for the next 24-48 hours")
     var recovery: String
@@ -52,7 +53,7 @@ extension RunAnalysis {
     // Reviews saved before the summary became bullet points stored it as one string.
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        effort = try container.decode(EffortLevel.self, forKey: .effort)
+        effort = try container.decodeIfPresent(EffortLevel.self, forKey: .effort)
         headline = try container.decode(String.self, forKey: .headline)
         if let points = try? container.decode([String].self, forKey: .summary) {
             summary = points

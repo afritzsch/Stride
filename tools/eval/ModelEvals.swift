@@ -17,6 +17,7 @@ func runModelEvals(filter: String?) async {
     }
     if filter == nil || "review".contains(filter!) {
         await evalRunReview(Scenario.demoWithHistory())
+        await evalStrengthReview(Scenario.demoWithHistory())
     }
     if filter == nil || "adjust".contains(filter!) {
         await evalAdjustment(Scenario.demoWithHistory())
@@ -90,13 +91,13 @@ private func evalRunReview(_ scenario: Scenario) async {
             plannedSession: scenario.history.plannedDay(on: run.start, calendar: scenario.calendar), note: "", compact: compact
         ).prompt
     }
-    print("  tokens: \(await tokens(RunPromptBuilder.instructions, prompt(false), RunAnalysis.generationSchema) ?? -1)")
+    print("  tokens: \(await tokens(RunPromptBuilder.instructions(for: .endurance), prompt(false), RunAnalysis.generationSchema) ?? -1)")
     let start = Date.now
     do {
         let review = try await AppleAnalyzer(allowPrivateCloud: false).analyze(
-            RunAnalysis.self, instructions: RunPromptBuilder.instructions, fullPrompt: prompt(false), compactPrompt: prompt(true)
+            RunAnalysis.self, instructions: RunPromptBuilder.instructions(for: .endurance), fullPrompt: prompt(false), compactPrompt: prompt(true)
         ).report
-        print("  generated in \(Int(Date.now.timeIntervalSince(start))) s: \(review.headline) [\(review.effort.rawValue)]")
+        print("  generated in \(Int(Date.now.timeIntervalSince(start))) s: \(review.headline) [\(review.effort?.rawValue ?? "no effort")]")
         review.summary.forEach { print("    • \($0)") }
         print("  plan: \(review.planComparison)")
         let words = review.headline.split(separator: " ").count
@@ -106,6 +107,44 @@ private func evalRunReview(_ scenario: Scenario) async {
         print("  numbers not in the prompt: \(unsupportedNumbers(in: text, prompt: prompt(false)))")
     } catch {
         check(false, "run review: \(error)")
+    }
+}
+
+/// A gym session on a day with an easy run planned: the case that came out as "Recovery run missed easy-run goal".
+private func evalStrengthReview(_ scenario: Scenario) async {
+    section("Strength review")
+    guard let gym = scenario.snapshot.workouts.last(where: { $0.sport == "Strength" }) else { return }
+    let detail = DemoData.detail(for: gym)
+    let easyRun = PlannedDay(
+        day: scenario.label(0), sport: "Running", intensity: .easy, session: "Easy run",
+        durationMinutes: 30, targetZone: 1, details: ""
+    )
+    func prompt(_ compact: Bool) -> String {
+        RunPromptBuilder(
+            detail: detail, snapshot: scenario.snapshot, metrics: scenario.metrics, profile: scenario.profile,
+            plannedSession: easyRun, note: "", compact: compact
+        ).prompt
+    }
+    let instructions = RunPromptBuilder.instructions(for: .strength)
+    print("  tokens: \(await tokens(instructions, prompt(false), RunAnalysis.generationSchema) ?? -1)")
+    do {
+        let review = try await AppleAnalyzer(allowPrivateCloud: false).analyze(
+            RunAnalysis.self, instructions: instructions, fullPrompt: prompt(false), compactPrompt: prompt(true)
+        ).report
+        print("  \(review.headline)")
+        (review.summary + review.highlights + review.improvements).forEach { print("    • \($0)") }
+        print("  plan: \(review.planComparison)")
+        print("  next: \(review.nextSession)")
+        let headline = review.headline.lowercased()
+        let callsItARun = ["recovery run", "easy run", "missed"].contains(where: headline.contains)
+            || (headline.contains("run") && !headline.contains("instead"))
+        check(!callsItARun, "headline doesn't call it a run (\(review.headline))")
+        let advice = (review.improvements + review.highlights).joined(separator: " ").lowercased()
+        let runningWords = ["pace", "split", "tempo", "interval", "400"]
+        check(!runningWords.contains(where: advice.contains), "no running advice in highlights or improvements")
+        check(!advice.contains("too light") && !advice.contains("too low"), "doesn't call the session too light")
+    } catch {
+        check(false, "strength review: \(error)")
     }
 }
 

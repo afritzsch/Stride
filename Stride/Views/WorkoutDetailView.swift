@@ -52,9 +52,9 @@ struct WorkoutDetailView: View {
                     }
                     analyzeCard.id("review")
                     if isAnalyzing, let preview = model.runPreviews[workout.id] {
-                        RunAnalysisPreview(analysis: preview)
+                        RunAnalysisPreview(analysis: preview, showsEffort: workout.kind == .endurance)
                     } else if let saved = model.runAnalyses[workout.id] {
-                        RunAnalysisContent(saved: saved).id("analysis")
+                        RunAnalysisContent(saved: saved, showsEffort: workout.kind == .endurance).id("analysis")
                     }
                 }
                 .padding()
@@ -63,7 +63,7 @@ struct WorkoutDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .task {
                 if model.runAnalyses[workout.id] == nil {
-                    AppleAnalyzer.prewarm(instructions: RunPromptBuilder.instructions)
+                    AppleAnalyzer.prewarm(instructions: RunPromptBuilder.instructions(for: workout.kind))
                 }
                 await load()
                 let hooks = model.consumeLaunchHooks()
@@ -399,10 +399,11 @@ private struct SplitsCard: View {
 /// The coach review while Apple Intelligence is still writing it.
 private struct RunAnalysisPreview: View {
     var analysis: RunAnalysis.PartiallyGenerated
+    var showsEffort: Bool
 
     var body: some View {
         Card {
-            if let effort = analysis.effort {
+            if showsEffort, let effort = analysis.effort {
                 StatusBadge(text: effort.rawValue.capitalized, color: effort.color)
             }
             if let headline = analysis.headline {
@@ -422,14 +423,19 @@ private struct RunAnalysisPreview: View {
 
 private struct RunAnalysisContent: View {
     var saved: SavedRunAnalysis
+    /// Off for strength sessions, including reviews saved before they stopped getting a heart-rate effort.
+    var showsEffort: Bool
 
     private var analysis: RunAnalysis { saved.analysis }
+    private var effort: EffortLevel? { showsEffort ? analysis.effort : nil }
 
     var body: some View {
         VStack(spacing: 16) {
             Card {
                 HStack {
-                    StatusBadge(text: analysis.effort.rawValue.capitalized, color: analysis.effort.color)
+                    if let effort {
+                        StatusBadge(text: effort.rawValue.capitalized, color: effort.color)
+                    }
                     Spacer()
                     Text("\(saved.modelName) · \(saved.createdAt.formatted(.relative(presentation: .named)))")
                         .font(.caption)
@@ -439,7 +445,7 @@ private struct RunAnalysisContent: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(analysis.summary, id: \.self) { point in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("•").foregroundStyle(analysis.effort.color)
+                            Text("•").foregroundStyle(effort?.color ?? .secondary)
                             Text(point)
                         }
                     }
