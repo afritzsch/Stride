@@ -8,7 +8,7 @@ import Observation
 final class ScheduleModel {
     var settings: ScheduleSettings {
         didSet {
-            UserDefaults.standard.set(try? JSONEncoder().encode(settings), forKey: Self.settingsKey)
+            UserDefaults.standard.setEncoded(settings, forKey: DefaultsKey.scheduleSettings)
             Task { await refresh() }
         }
     }
@@ -38,8 +38,7 @@ final class ScheduleModel {
 
     init(model: AppModel) {
         self.model = model
-        settings = UserDefaults.standard.data(forKey: Self.settingsKey)
-            .flatMap { try? JSONDecoder().decode(ScheduleSettings.self, from: $0) } ?? ScheduleSettings()
+        settings = UserDefaults.standard.decoded(ScheduleSettings.self, forKey: DefaultsKey.scheduleSettings) ?? ScheduleSettings()
         changeObserver = Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: CalendarService.changed) {
                 self?.reloadCalendar()
@@ -207,6 +206,4 @@ final class ScheduleModel {
             model?.debugLog("Updating the calendar event failed: \(error)")
         }
     }
-
-    private static let settingsKey = "scheduleSettings"
 }

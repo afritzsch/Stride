@@ -13,6 +13,54 @@ nonisolated enum LegacyKeychain {
     }
 }
 
+/// Every UserDefaults key the app uses, so a key can't drift between the place that writes it and the one that reads it.
+/// The values are what earlier versions already saved: don't change them.
+nonisolated enum DefaultsKey {
+    static let profile = "profile"
+    static let useDemoData = "useDemoData"
+    static let allowPrivateCloud = "allowPrivateCloud"
+    static let autoReviewWorkouts = "autoReviewWorkouts"
+    static let autoReviewAttempted = "autoReviewAttempted"
+    static let todayAdjustment = "todayAdjustment"
+    static let scheduleSettings = "scheduleSettings"
+    static let hevyAccountName = "hevyAccountName"
+    static let hevyLastSync = "hevyLastSync"
+    static let removedClaudeSettings = "removedClaudeSettings"
+    /// Set by the earliest versions, which could use Claude; removed on first launch.
+    static let legacyEngine = "engine"
+
+    // Launch arguments (`-route chat`, see AppModel+Debug); debug builds only read them.
+    static let route = "route"
+    static let scrollTo = "scrollTo"
+    static let planSheet = "planSheet"
+    static let analyze = "analyze"
+    static let fixture = "fixture"
+    static let exportFixture = "exportFixture"
+    static let probeModel = "probeModel"
+    static let demoHevy = "demoHevy"
+}
+
+extension UserDefaults {
+    /// `bool(forKey:)` also understands "YES"/"NO" strings (launch arguments arrive as strings), but returns false
+    /// for a missing key; this returns `value` for that.
+    func bool(forKey key: String, default value: Bool) -> Bool {
+        object(forKey: key) != nil ? bool(forKey: key) : value
+    }
+
+    func decoded<Value: Decodable>(_: Value.Type, forKey key: String) -> Value? {
+        data(forKey: key).flatMap { try? JSONDecoder().decode(Value.self, from: $0) }
+    }
+
+    /// Stores the value as JSON, or removes the key for nil.
+    func setEncoded(_ value: (some Encodable)?, forKey key: String) {
+        guard let value, let data = try? JSONEncoder().encode(value) else {
+            removeObject(forKey: key)
+            return
+        }
+        set(data, forKey: key)
+    }
+}
+
 /// Saves Codable values as JSON files in Application Support.
 nonisolated enum JSONStore {
     static let analyses = "analyses.json"
@@ -40,15 +88,35 @@ nonisolated enum JSONStore {
         try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: file))
     }
 
-    static func save(_ value: some Encodable, to file: String) {
+    /// Returns false (after printing why) when the file couldn't be written, so callers can record it.
+    @discardableResult
+    static func save(_ value: some Encodable, to file: String) -> Bool {
         do {
             try FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
             try JSONEncoder().encode(value).write(
                 to: URL.applicationSupportDirectory.appending(path: file),
                 options: [.atomic, .completeFileProtection]
             )
+            return true
         } catch {
             print("Stride: failed to save \(file): \(error)")
+            return false
         }
+    }
+}
+
+extension HealthFixture {
+    /// Fixture dates are ISO 8601, so exports are readable and stable.
+    nonisolated static func encoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+
+    nonisolated static func decoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
