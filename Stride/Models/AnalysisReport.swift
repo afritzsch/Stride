@@ -143,6 +143,45 @@ nonisolated struct AnalysisReport: Codable, Hashable, Sendable {
     var weekPlan: [PlannedDay]
 }
 
+/// The report without its plan. The iPhone's on-device model (4096-token window) can't fit the brief and the whole
+/// report, so it writes this first and the plan (`WeekPlan`) in a second request. Keep the guides in step with
+/// `AnalysisReport`.
+@Generable
+nonisolated struct AnalysisAssessment: Sendable {
+    @Guide(description: "One-sentence headline with the single most important finding")
+    var headline: String
+    var trainingStatus: TrainingStatus
+    @Guide(description: "Overall assessment in 2-4 sentences")
+    var assessment: String
+    @Guide(description: "Key observations across training, sleep and activity", .count(3...6))
+    var insights: [Insight]
+    @Guide(description: "Prioritized changes the athlete should make", .count(3...5))
+    var recommendations: [Recommendation]
+    @Guide(description: "Outlook toward the goal event, or an empty string if there is no goal")
+    var goalOutlook: String
+
+    func report(weekPlan: [PlannedDay]) -> AnalysisReport {
+        AnalysisReport(
+            headline: headline, trainingStatus: trainingStatus, assessment: assessment, insights: insights,
+            recommendations: recommendations, goalOutlook: goalOutlook, weekPlan: weekPlan
+        )
+    }
+}
+
+nonisolated extension AnalysisReport.PartiallyGenerated {
+    /// A preview of the report while the assessment streams, before there is a plan.
+    init?(_ assessment: AnalysisAssessment.PartiallyGenerated) {
+        guard var preview = try? Self(GeneratedContent(properties: [:])) else { return nil }
+        preview.headline = assessment.headline
+        preview.trainingStatus = assessment.trainingStatus
+        preview.assessment = assessment.assessment
+        preview.insights = assessment.insights
+        preview.recommendations = assessment.recommendations
+        preview.goalOutlook = assessment.goalOutlook
+        self = preview
+    }
+}
+
 nonisolated struct SavedAnalysis: Codable, Hashable, Identifiable, Sendable {
     var id = UUID()
     var createdAt: Date

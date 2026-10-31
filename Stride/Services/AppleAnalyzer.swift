@@ -184,6 +184,15 @@ nonisolated struct AppleAnalyzer {
         LanguageModelSession(instructions: instructions).prewarm()
     }
 
+    /// Whether one request can hold `prompt` and the whole `Output`. Private Cloud Compute has room to spare; the
+    /// on-device window is 4096 tokens on iPhone (8192 on a Mac), too small for a weekly brief plus its report.
+    func fitsInOneRequest<Output: Generable>(_: Output.Type, instructions: String, prompt: String) async -> Bool {
+        #if PRIVATE_CLOUD_COMPUTE
+        if allowPrivateCloud, Self.privateCloudBlocker == nil { return true }
+        #endif
+        return await Self.fitsOnDevice(Output.self, instructions: instructions, prompt: prompt)
+    }
+
     private static func fitsOnDevice<Output: Generable>(_: Output.Type, instructions: String, prompt: String) async -> Bool {
         let model = SystemLanguageModel.default
         do {

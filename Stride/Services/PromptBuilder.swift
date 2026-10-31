@@ -15,7 +15,17 @@ nonisolated struct PromptBuilder {
     var athleteDays: [AthletePlanDay] = []
     /// Free time and rain per plan day (`SessionScheduler.availabilityLine`), empty when the calendar isn't used.
     var availability: [String] = []
+    /// What to write: the whole report, or one of the two steps used when it doesn't fit the context window.
+    var part: Part = .report
     var calendar = Calendar.current
+
+    enum Part: Equatable {
+        case report
+        /// Everything but the plan (`AnalysisAssessment`).
+        case assessment
+        /// Just the plan (`WeekPlan`), consistent with the assessment written in the first step.
+        case plan(assessment: String)
+    }
 
     static let instructions = """
         You are an experienced endurance coach and sleep and recovery specialist. You are reviewing an athlete's \
@@ -75,7 +85,7 @@ nonisolated struct PromptBuilder {
         } else {
             lines.append("- Goal: none set (general fitness)")
         }
-        if !profile.notes.isEmpty { lines.append("- Notes: \(profile.notes)") }
+        if !profile.notes.isEmpty { lines.append("- Notes: \(compact ? Self.quote(profile.notes, limit: 300) : profile.notes)") }
 
         lines.append("")
         lines.append("KEY INDICATORS (load = Banister TRIMP from avg HR)")
@@ -154,14 +164,16 @@ nonisolated struct PromptBuilder {
 
         lines.append(contentsOf: memorySections)
 
-        if !availability.isEmpty {
+        // Free time and the athlete's own days only shape the plan, so the assessment step leaves them out.
+        let plans = part != .assessment
+        if plans, !availability.isEmpty {
             lines.append("")
             lines.append("FREE TIME (day | free time in the calendar, from the athlete's earliest to latest training time | weather)")
             lines += availability
         }
         let labels = Self.planLabels(start: planStart, calendar: calendar)
         let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar).sorted { $0.key < $1.key }
-        if !pinned.isEmpty {
+        if plans, !pinned.isEmpty {
             lines.append("")
             lines.append("THE ATHLETE'S OWN PLAN (day | session | details); keep these days exactly")
             for (index, day) in pinned {
@@ -170,7 +182,16 @@ nonisolated struct PromptBuilder {
         }
 
         lines.append("")
-        lines.append("Write the 7-day plan for these days, in this order, using these exact labels: \(labels.joined(separator: ", ")).")
+        switch part {
+        case .report:
+            lines.append("Write the 7-day plan for these days, in this order, using these exact labels: \(labels.joined(separator: ", ")).")
+        case .assessment:
+            lines.append("Write your assessment of this data. The 7-day plan is written in a separate step, so leave it out.")
+        case .plan(let assessment):
+            lines.append("YOUR ASSESSMENT (written in an earlier step; the plan should follow from it): \(assessment)")
+            lines.append("")
+            lines.append("Now write only the 7-day plan for these days, in this order, using these exact labels: \(labels.joined(separator: ", ")).")
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -244,11 +265,11 @@ nonisolated struct PromptBuilder {
         (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }.map { dayLabel($0, calendar: calendar) }
     }
 
-    /// One line, at most 160 characters, or "–" when empty.
-    static func quote(_ text: String) -> String {
+    /// One line, at most `limit` characters, or "–" when empty.
+    static func quote(_ text: String, limit: Int = 160) -> String {
         let line = text.split(whereSeparator: \.isNewline).joined(separator: " ").trimmingCharacters(in: .whitespaces)
         guard !line.isEmpty else { return "–" }
-        return line.count > 160 ? String(line.prefix(159)) + "…" : line
+        return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
     }
 
     /// "Mon 27 Oct": no commas, so labels can be listed unambiguously.

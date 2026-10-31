@@ -21,21 +21,35 @@ extension AppModel {
         let planStart = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: .now)) ?? .now
         await schedule.refresh()
         let availability = (full: schedule.availability(start: planStart, compact: false), compact: schedule.availability(start: planStart, compact: true))
-        func prompt(compact: Bool) -> String {
+        func prompt(_ part: PromptBuilder.Part, compact: Bool) -> String {
             PromptBuilder(
                 snapshot: snapshot, metrics: metrics, profile: profile, planStart: planStart, compact: compact,
                 history: history, reviews: runAnalyses, athleteDays: athleteDays,
-                availability: compact ? availability.compact : availability.full
+                availability: compact ? availability.compact : availability.full, part: part
             ).prompt
         }
 
         do {
-            let result = try await generate(
-                AnalysisReport.self,
-                instructions: PromptBuilder.instructions,
-                fullPrompt: prompt(compact: false),
-                compactPrompt: prompt(compact: true)
-            ) { [weak self] partial in self?.analysisPreview = partial }
+            let analyzer = AppleAnalyzer(allowPrivateCloud: usesPrivateCloud)
+            let compact = prompt(.report, compact: true)
+            var result: (output: AnalysisReport, modelName: String, notice: String?)
+            if await analyzer.fitsInOneRequest(AnalysisReport.self, instructions: PromptBuilder.instructions, prompt: compact) {
+                do {
+                    result = try await generate(
+                        AnalysisReport.self,
+                        instructions: PromptBuilder.instructions,
+                        fullPrompt: prompt(.report, compact: false),
+                        compactPrompt: compact
+                    ) { [weak self] partial in self?.analysisPreview = partial }
+                } catch AnalyzerError.contextTooLarge {
+                    // The report came out longer than the room kept for it.
+                    debugLog("Weekly report overflowed the context window; writing it in two steps")
+                    result = try await generateReportInSteps(prompt: prompt)
+                }
+            } else {
+                debugLog("Weekly report doesn't fit one request; writing it in two steps")
+                result = try await generateReportInSteps(prompt: prompt)
+            }
             var report = result.output
             let labels = PromptBuilder.planLabels(start: planStart, calendar: calendar)
             let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar)
@@ -47,6 +61,31 @@ extension AppModel {
             analysisError = error.localizedDescription
             debugLog("Weekly analysis failed: \(error)")
         }
+    }
+
+    /// The iPhone's on-device window (4096 tokens) can't hold the brief and the whole report, so this writes the
+    /// assessment first and then the plan, each in a fresh session with the same brief.
+    private func generateReportInSteps(
+        prompt: (PromptBuilder.Part, _ compact: Bool) -> String
+    ) async throws -> (output: AnalysisReport, modelName: String, notice: String?) {
+        analysisPreview = nil
+        let assessment = try await generate(
+            AnalysisAssessment.self,
+            instructions: PromptBuilder.instructions,
+            fullPrompt: prompt(.assessment, false),
+            compactPrompt: prompt(.assessment, true)
+        ) { [weak self] partial in self?.analysisPreview = AnalysisReport.PartiallyGenerated(partial) }
+
+        analysisStep = "Planning your week…"
+        let summary = PromptBuilder.quote("\(assessment.output.headline) \(assessment.output.assessment)", limit: 500)
+        let plan = try await generate(
+            WeekPlan.self,
+            instructions: PromptBuilder.instructions,
+            fullPrompt: prompt(.plan(assessment: summary), false),
+            compactPrompt: prompt(.plan(assessment: summary), true)
+        ) { [weak self] partial in self?.analysisPreview?.weekPlan = partial.days }
+
+        return (assessment.output.report(weekPlan: plan.output.days), plan.modelName, assessment.notice ?? plan.notice)
     }
 
     /// Fixes labels and rest days in code, then asks the model once to fix rules it broke (hours, training days,

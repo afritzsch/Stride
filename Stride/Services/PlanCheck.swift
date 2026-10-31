@@ -52,10 +52,11 @@ nonisolated enum PlanCheck {
     }
 }
 
-/// Just the 7-day plan, for asking the model to fix one that broke the rules.
+/// Just the 7-day plan: the second step of a weekly analysis on a small context window, and the fix for a plan
+/// that broke the rules.
 @Generable
 nonisolated struct WeekPlan: Codable, Hashable, Sendable {
-    @Guide(description: "The corrected plan, one entry per day, in order", .count(7))
+    @Guide(description: "The 7-day plan, one entry per day, in order", .count(7))
     var days: [PlannedDay]
 }
 
