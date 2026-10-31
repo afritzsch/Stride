@@ -140,6 +140,8 @@ final class ScheduleModel {
         calendarAccess = CalendarService.access
         let today = Calendar.current.startOfDay(for: .now)
         calendarBusy = calendar.busy(from: today, to: today.addingTimeInterval(9 * 86400))
+        // Sessions may have been moved or deleted in the Calendar app.
+        model?.syncSessionReminders()
     }
 
     private func refreshWeather(force: Bool) async {
@@ -165,6 +167,7 @@ final class ScheduleModel {
             liveForecast = try await WeatherClient.forecast(source: source, place: place)
             forecastKey = key
             weatherError = nil
+            model?.syncSessionReminders()  // they mention the forecast
             #if WEATHERKIT
             if source == .apple, appleAttribution == nil, let marks = await WeatherClient.appleAttribution() {
                 appleAttribution = WeatherAttribution(mark: marks.mark, darkMark: marks.darkMark, legal: marks.legal)
@@ -194,6 +197,7 @@ final class ScheduleModel {
             demoSessions.removeAll { $0.sessionDate == day }
             demoSessions.append(BusyInterval(start: start, end: end, title: session.session, sessionDate: day, eventID: UUID().uuidString))
             model?.debugLog("Demo session added: \(session.session) at \(start.formatted())")
+            model?.syncSessionReminders()
             return
         }
         let existing = calendarBusy.first { $0.sessionDate == day }
@@ -203,10 +207,12 @@ final class ScheduleModel {
         calendarBusy.removeAll { $0.sessionDate == day }
         calendarBusy.append(event)
         calendarBusy.sort { $0.start < $1.start }
+        model?.syncSessionReminders()
     }
 
     func removeSession(on date: Date) throws {
         let day = Calendar.current.startOfDay(for: date)
+        defer { model?.syncSessionReminders() }
         if isDemo {
             demoSessions.removeAll { $0.sessionDate == day }
             return
@@ -218,7 +224,8 @@ final class ScheduleModel {
     }
 
     /// Keeps the calendar in step after the plan for a day changed: the event moves out for a rest day, and
-    /// otherwise keeps its start with the new title and length.
+    /// otherwise keeps its start with the new title and length. Either way the session reminder follows
+    /// (`AppModel.syncSessionReminders`).
     func sessionChanged(on date: Date) {
         let day = Calendar.current.startOfDay(for: date)
         guard let event = busy.first(where: { $0.sessionDate == day }) else { return }

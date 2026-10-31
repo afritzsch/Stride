@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 /// The debug state dump (Documents/debug-state.json): what the app computed, so tests can check numbers, not just pixels.
 extension AppModel {
@@ -30,6 +31,11 @@ extension AppModel {
         state.merge(debugPlanState()) { $1 }
         state.merge(debugStrengthState()) { $1 }
         state["schedule"] = debugScheduleState()
+        state["notifications"] = [
+            "readiness": notificationSettings.readiness, "newWorkouts": notificationSettings.newWorkouts,
+            "sessionReminders": notificationSettings.sessionReminders, "reminderLeadMinutes": notificationSettings.reminderLeadMinutes,
+            "authorization": notificationAuthorization.rawValue, "recentlyHandled": Array(notificationLog.keys.suffix(10)),
+        ] as [String: Any]
         state.merge(debugMetricsState()) { $1 }
         if UserDefaults.standard.string(forKey: DefaultsKey.route) == "chat" {
             // What the chat's tools return, so they can be checked without the model.

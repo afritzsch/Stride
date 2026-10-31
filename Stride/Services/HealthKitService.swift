@@ -56,6 +56,58 @@ nonisolated struct HealthKitService: Sendable {
         try await store.requestAuthorization(toShare: [], read: readTypes)
     }
 
+    // MARK: - Background delivery
+
+    /// New samples of these wake the app (`enableBackgroundDelivery`): workouts and sleep as soon as they sync,
+    /// resting HR and HRV at most hourly (Garmin writes them once or twice a day, so it's cheap).
+    private static var backgroundTypes: [(type: HKSampleType, frequency: HKUpdateFrequency)] {
+        [
+            (HKObjectType.workoutType(), .immediate),
+            (HKCategoryType(.sleepAnalysis), .immediate),
+            (HKQuantityType(.restingHeartRate), .hourly),
+            (HKQuantityType(.heartRateVariabilitySDNN), .hourly),
+        ]
+    }
+
+    /// Asks HealthKit to launch or wake the app when new samples arrive. Needs the background-delivery entitlement.
+    func setBackgroundDelivery(enabled: Bool) async {
+        do {
+            if enabled {
+                for entry in Self.backgroundTypes {
+                    try await store.enableBackgroundDelivery(for: entry.type, frequency: entry.frequency)
+                }
+            } else {
+                try await store.disableAllBackgroundDelivery()
+            }
+        } catch {
+            print("Stride: \(enabled ? "enabling" : "disabling") background delivery failed: \(error)")
+        }
+    }
+
+    /// Starts one observer query per background type. HealthKit calls `onChange` (once right away, then for new
+    /// samples, also after launching the app in the background); it must call the completion handler it gets
+    /// when the update is handled. Returns the queries so they can be stopped.
+    func observeChanges(_ onChange: @escaping @Sendable (_ completion: @escaping @Sendable () -> Void) -> Void) -> [HKObserverQuery] {
+        Self.backgroundTypes.map { entry in
+            let query = HKObserverQuery(sampleType: entry.type, predicate: nil) { _, handler, error in
+                // HealthKit's completion handler may be called from any thread.
+                nonisolated(unsafe) let completion = handler
+                if let error {
+                    print("Stride: observer for \(entry.type.identifier) failed: \(error)")
+                    completion()
+                    return
+                }
+                onChange { completion() }
+            }
+            store.execute(query)
+            return query
+        }
+    }
+
+    func stop(_ queries: [HKObserverQuery]) {
+        queries.forEach(store.stop)
+    }
+
     /// Write access is asked for separately, on the first weigh-in, so reading never depends on it.
     func saveBodyMass(kg: Double, at date: Date) async throws {
         let type = HKQuantityType(.bodyMass)

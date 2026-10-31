@@ -109,6 +109,8 @@ def launch(
     reinstall: bool = False,
     wait: float = 7.0,
     sheet: str | None = None,
+    notify: str | None = None,
+    notify_open: str | None = None,
 ) -> dict:
     """Install and (re)launch the app on a screen.
 
@@ -121,6 +123,9 @@ def launch(
         on progress: trend | compare | records | achievements; on plan: adherence.
     analyze: review the first workout opened (only workout routes support this).
     sheet: on the plan route, open week (week editor), edit:<n> or time:<n> for the day n days from today.
+    notify: post readiness | workout | session | all from the current data a few seconds after launch (8 s apart);
+        the first time, iOS asks for permission.
+    notify_open: handle a tap on readiness | workout | session (opens its screen).
     """
     if not APP.exists():
         raise RuntimeError("App not built yet; run build first.")
@@ -150,6 +155,10 @@ def launch(
         args += ["-analyze", "YES"]
     if sheet:
         args += ["-planSheet", sheet]
+    if notify:
+        args += ["-notify", notify]
+    if notify_open:
+        args += ["-notifyOpen", notify_open]
     out = simctl("launch", udid, BUNDLE_ID, *args).stdout.strip()
     # simctl prints "<bundle id>: <pid>".
     pid_text = out.rpartition(":")[2].strip()
@@ -161,6 +170,32 @@ def launch(
     if not running:
         result["crashLog"] = logs(seconds=30)
     return result
+
+
+def allow_notifications() -> str:
+    """Lets Stride notify on the test simulator without tapping "Allow" (simctl privacy has no notifications
+    service, and a headless simulator has no window to tap in). Copies the Files app's notification settings
+    entry for Stride into SpringBoard's store and reboots the simulator. Run it after a fresh install."""
+    import plistlib
+
+    udid = boot()
+    store = Path.home() / f"Library/Developer/CoreSimulator/Devices/{udid}/data/Library/BulletinBoard/VersionedSectionInfo.plist"
+    data = plistlib.loads(store.read_bytes())
+    sections = data["sectionInfo"]
+    if BUNDLE_ID in sections:
+        archive = plistlib.loads(sections[BUNDLE_ID])
+        for obj in archive["$objects"]:
+            if isinstance(obj, dict) and "authorizationStatus" in obj:
+                obj["authorizationStatus"] = 2
+    else:
+        archive = plistlib.loads(sections["com.apple.DocumentsApp"])
+        objects = archive["$objects"]
+        objects[objects.index("com.apple.DocumentsApp")] = BUNDLE_ID
+    sections[BUNDLE_ID] = plistlib.dumps(archive, fmt=plistlib.FMT_BINARY)
+    simctl("shutdown", udid, check=False)
+    store.write_bytes(plistlib.dumps(data, fmt=plistlib.FMT_BINARY))
+    boot()
+    return f"Notifications allowed for {BUNDLE_ID} on {udid}"
 
 
 def screenshot(path: str | None = None) -> str:
@@ -282,12 +317,19 @@ def serve() -> None:
     def launch_tool(
         route: str = "dashboard", demo: bool | None = None, fixture: str | None = None,
         scroll_to: str | None = None, analyze: bool = False, reinstall: bool = False, sheet: str | None = None,
+        notify: str | None = None, notify_open: str | None = None,
     ) -> dict:
         """Install and relaunch Stride on a screen. route: dashboard | progress | coach | chat | plan | settings | workouts | strength |
         workout:<latest|latest-run|latest-strength|index|uuid> | skill:<name> | metric:<load|acwr|sleep|restingHR|hrv|steps|weight>. fixture: Mac path of a HealthFixture JSON to replay.
         scroll_to: route | heart-rate | zones | splits | review | analysis; adherence on plan.
-        sheet: on plan, week | edit:<n> | time:<n> (n = days from today)."""
-        return launch(route, demo, fixture, scroll_to, analyze, reinstall, sheet=sheet)
+        sheet: on plan, week | edit:<n> | time:<n> (n = days from today).
+        notify: post readiness | workout | session | all a few seconds after launch; notify_open: handle a tap on one."""
+        return launch(route, demo, fixture, scroll_to, analyze, reinstall, sheet=sheet, notify=notify, notify_open=notify_open)
+
+    @mcp.tool(name="allow_notifications")
+    def allow_notifications_tool() -> str:
+        """Allow Stride's notifications on the test simulator without the permission prompt (reboots it)."""
+        return allow_notifications()
 
     @mcp.tool(name="screenshot")
     def screenshot_tool() -> Image:
@@ -330,6 +372,10 @@ def cli(argv: list[str]) -> None:
     p.add_argument("--analyze", action="store_true")
     p.add_argument("--reinstall", action="store_true")
     p.add_argument("--sheet")
+    p.add_argument("--notify")
+    p.add_argument("--notify-open")
+    p.add_argument("--wait", type=float, default=7.0, help="seconds to wait after launching")
+    sub.add_parser("allow-notifications")
     p = sub.add_parser("screenshot")
     p.add_argument("path", nargs="?")
     p = sub.add_parser("state")
@@ -350,7 +396,8 @@ def cli(argv: list[str]) -> None:
     match args.command:
         case "build": print(build())
         case "launch":
-            print(json.dumps(launch(args.route, args.demo, args.fixture, args.scroll_to, args.analyze, args.reinstall, sheet=args.sheet), indent=2))
+            print(json.dumps(launch(args.route, args.demo, args.fixture, args.scroll_to, args.analyze, args.reinstall, wait=args.wait, sheet=args.sheet, notify=args.notify, notify_open=args.notify_open), indent=2))
+        case "allow-notifications": print(allow_notifications())
         case "screenshot": print(screenshot(args.path))
         case "state": print(json.dumps(state(args.section), indent=2))
         case "logs": print(logs(args.seconds))

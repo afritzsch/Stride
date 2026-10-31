@@ -6,7 +6,7 @@ struct CoachReviewSection: View {
     @Environment(AppModel.self) private var model
     var workout: WorkoutSummary
     var detail: WorkoutDetail?
-    /// Debug launch hook: run the review as soon as the workout has loaded.
+    /// Run the review as soon as the workout has loaded (a notification tap, or the -analyze debug hook).
     var analyzesOnLoad = false
 
     @State private var note = ""

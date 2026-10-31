@@ -1,6 +1,8 @@
 import Foundation
 import FoundationModels
+import HealthKit
 import Observation
+import UserNotifications
 
 enum AppTab: String, Hashable {
     case dashboard, progress, coach, plan, settings
@@ -98,6 +100,29 @@ final class AppModel {
     var isAdjustingToday = false
     var adjustmentError: String?
 
+    // MARK: Background refresh and notifications (AppModel+Background)
+
+    /// Which notifications are on. Saved to UserDefaults on every change.
+    var notificationSettings: NotificationSettings {
+        didSet { saveNotificationSettings(oldValue: oldValue) }
+    }
+    /// Whether iOS lets Stride notify, as last read; `.denied` explains in Settings why nothing arrives.
+    var notificationAuthorization = UNAuthorizationStatus.notDetermined
+    /// What was notified (or seen in the app), so each workout and morning notifies once.
+    @ObservationIgnored var notificationLog: NotificationLog {
+        didSet { UserDefaults.standard.setEncoded(notificationLog, forKey: DefaultsKey.notificationLog) }
+    }
+    @ObservationIgnored let notifier = NotificationService()
+    /// The HealthKit observer queries, once started.
+    @ObservationIgnored var healthObservers: [HKObserverQuery] = []
+    /// HealthKit completion handlers waiting for the running background update.
+    @ObservationIgnored var pendingHealthCompletions: [@Sendable () -> Void] = []
+    @ObservationIgnored var backgroundUpdateTask: Task<Void, Never>?
+    /// A route from a notification tap that waits for the data it needs (e.g. a workout before the first refresh).
+    @ObservationIgnored var pendingRoute: String?
+    /// A workout opened from its notification: its screen runs (or shows) the coach review.
+    @ObservationIgnored var reviewRequestID: UUID?
+
     // MARK: Services and navigation
 
     /// The "Ask the coach" conversation, kept while the app runs.
@@ -169,6 +194,8 @@ final class AppModel {
         let savedRuns = JSONStore.load([SavedRunAnalysis].self, from: JSONStore.runAnalyses) ?? []
         runAnalyses = Dictionary(savedRuns.map { ($0.workoutID, $0) }, uniquingKeysWith: { latest, _ in latest })
         archive = JSONStore.load(HealthSnapshot.self, from: JSONStore.archive)
+        notificationSettings = Self.loadNotificationSettings()
+        notificationLog = defaults.decoded(NotificationLog.self, forKey: DefaultsKey.notificationLog) ?? NotificationLog()
         #if DEBUG
         fixture = Self.loadFixture()
         #endif

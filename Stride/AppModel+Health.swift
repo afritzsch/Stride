@@ -2,13 +2,19 @@ import Foundation
 
 /// Reading Apple Health (or demo data, or a fixture), the metrics computed from it, and the long history archive.
 extension AppModel {
-    func refresh() async {
+    /// Rereads the data. `loadsArchive: false` (background updates) skips the long history, which can take longer
+    /// than the background time.
+    func refresh(loadsArchive: Bool = true) async {
         refreshGeneration += 1
         let generation = refreshGeneration
         healthError = nil
         defer {
             writeDebugState()
-            if generation == refreshGeneration { Task { await refreshArchive() } }
+            if generation == refreshGeneration {
+                // A notification tapped before the data was loaded opens its screen now.
+                applyPendingRoute()
+                if loadsArchive { Task { await refreshArchive() } }
+            }
         }
         // A fixture wins over demo data; both are replayed without asking HealthKit.
         if let replayed = fixture?.snapshot ?? (useDemoData ? DemoData.snapshot() : nil) {
@@ -43,6 +49,7 @@ extension AppModel {
             guard generation == refreshGeneration else { return }
             snapshot = fetched
             recomputeMetrics()
+            await startBackgroundObservers()
         } catch {
             guard generation == refreshGeneration else { return }
             healthError = error.localizedDescription

@@ -6,7 +6,7 @@ struct WorkoutDetailView: View {
 
     @State private var detail: WorkoutDetail?
     @State private var loadError: String?
-    /// Debug launch hook (-analyze): hands the review section the go-ahead once the workout has loaded.
+    /// Debug launch hook (-analyze) or a notification tap: hands the review section the go-ahead once the workout has loaded.
     @State private var analyzesOnLoad = false
 
     private var zones: HeartRateZones { model.heartRateZones }
@@ -62,11 +62,13 @@ struct WorkoutDetailView: View {
                 if workout.kind == .strength { await model.strength.sync() }
                 await load()
                 let hooks = model.consumeLaunchHooks()
-                if let target = hooks.scrollTarget {
+                // Opened from its notification: show the coach review, running it if there's none yet.
+                let fromNotification = model.consumeReviewRequest(for: workout.id)
+                if let target = hooks.scrollTarget ?? (fromNotification ? "review" : nil) {
                     try? await Task.sleep(for: .milliseconds(300))
                     proxy.scrollTo(target, anchor: .top)
                 }
-                analyzesOnLoad = hooks.analyze
+                analyzesOnLoad = hooks.analyze || fromNotification
             }
         }
     }

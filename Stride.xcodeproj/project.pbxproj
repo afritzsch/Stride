@@ -10,9 +10,22 @@
 		000000000000000000000120 /* Stride.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Stride.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		000000000000000000000011 /* Exceptions for "Stride" folder in "Stride" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 000000000000000100000000 /* Stride */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		000000000000000000000010 /* Stride */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				000000000000000000000011 /* Exceptions for "Stride" folder in "Stride" target */,
+			);
 			path = Stride;
 			sourceTree = "<group>";
 		};
@@ -259,6 +272,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Stride/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV, steps and weight from Apple Health so the AI coach can analyze your training and plan your week.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Stride saves the weight you log in the app to Apple Health.";
@@ -307,6 +321,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Stride/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV, steps and weight from Apple Health so the AI coach can analyze your training and plan your week.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Stride saves the weight you log in the app to Apple Health.";

@@ -118,8 +118,9 @@ extension AppModel {
     // MARK: - Workout reviews
 
     /// Reviews workouts from the last two days that have no review yet, one at a time. Each is tried once, so a
-    /// failure (or a workout the model can't handle) doesn't repeat on every refresh.
-    func reviewNewWorkouts() async {
+    /// failure (or a workout the model can't handle) doesn't repeat on every refresh. In the background the model
+    /// often can't run, so a failure there doesn't count as the try: the app tries again when it opens.
+    func reviewNewWorkouts(inBackground: Bool = false) async {
         guard autoReviewWorkouts, currentAIBlocker() == nil, let snapshot else { return }
         let since = Date.now.addingTimeInterval(-Limits.autoReviewWindow)
         var tried = AutoReviewLog()
@@ -134,9 +135,11 @@ extension AppModel {
                 _ = try await analyzeWorkout(detail, note: "")
                 debugLog("Auto-reviewed \(workout.sport) on \(workout.start.formatted())")
             } catch {
-                // Cancelled by a newer refresh: leave it for that one instead of marking it as tried.
-                if Task.isCancelled {
+                // Cancelled by a newer refresh, or failed in the background where the model often can't run: leave
+                // it for the next try instead of marking it as tried.
+                if Task.isCancelled || inBackground {
                     tried.remove(workout.id)
+                    debugLog("Auto-review \(Task.isCancelled ? "cancelled" : "failed in the background"): \(error)")
                     return
                 }
                 debugLog("Auto-review failed: \(error)")

@@ -4,7 +4,7 @@ import FoundationModels
 /// Hooks for driving the app from the Simulator (see tools/stride-mcp). Debug builds only read these
 /// launch arguments:
 ///   -route dashboard | coach | chat | plan | settings | workouts | strength
-///          | workout:<latest | latest-run | latest-strength | index | uuid>
+///          | workout:<latest | latest-run | latest-strength | index | uuid> | review:<same> (opens the coach review)
 ///          | progress | skill:<endurance | power | strength | explorer | vitality | rest | discipline>
 ///          | metric:<load | acwr | sleep | restingHR | hrv | steps | weight>
 ///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis;
@@ -15,6 +15,9 @@ import FoundationModels
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
 ///   -debugState YES       also write Documents/debug-state.json on a device (always written in the Simulator)
+///   -notify <kind>        post that notification (readiness, workout, session or all) a few seconds after launch,
+///                         from the current data, whatever the switches and the time of day
+///   -notifyOpen <kind>    handle a tap on that notification (readiness, workout or session) after launch
 ///   -probeModel YES       ask the on-device model for one word whatever `availability` says; writes Documents/model-probe.json
 extension AppModel {
     static func loadFixture() -> HealthFixture? {
@@ -42,39 +45,7 @@ extension AppModel {
     func applyLaunchRoute() {
         #if DEBUG
         guard let route = UserDefaults.standard.string(forKey: DefaultsKey.route) else { return }
-        let parts = route.split(separator: ":", maxSplits: 1).map(String.init)
-        dashboardPath = []
-        progressPath = []
-        switch parts.first ?? "" {
-        case "progress": selectedTab = .progress
-        case "skill":
-            selectedTab = .progress
-            if let skill = Skill(rawValue: parts.count > 1 ? parts[1] : "") { progressPath = [skill] }
-        case "coach": selectedTab = .coach
-        case "chat":
-            selectedTab = .coach
-            showsCoachChat = true
-        case "plan": selectedTab = .plan
-        case "settings": selectedTab = .settings
-        case "workouts":
-            selectedTab = .dashboard
-            dashboardPath = [.allWorkouts]
-        case "strength":
-            selectedTab = .dashboard
-            dashboardPath = [.strength]
-        case "workout":
-            selectedTab = .dashboard
-            if let workout = workout(matching: parts.count > 1 ? parts[1] : "latest") {
-                dashboardPath = [.workout(workout)]
-            }
-        case "metric":
-            selectedTab = .dashboard
-            if let metric = DashboardMetric(rawValue: parts.count > 1 ? parts[1] : "") {
-                dashboardPath = [.metric(metric)]
-            }
-        default:
-            selectedTab = .dashboard
-        }
+        open(route: route)
         #endif
     }
 
@@ -146,6 +117,76 @@ extension AppModel {
         }
         probe["availabilityAfter"] = String(describing: model.availability)
         save()
+    }
+}
+#endif
+
+#if DEBUG
+extension AppModel {
+    /// The -notify and -notifyOpen hooks: post a notification (asking for permission first, which shows the
+    /// system prompt once per install) or handle a tap on one, so each can be checked in the Simulator, where
+    /// HealthKit never delivers anything in the background. The text comes from `NotificationPlanner` with the
+    /// current data; only the decision (time of day, readiness actually down, new data) is skipped.
+    func handleNotificationHooks() async {
+        let defaults = UserDefaults.standard
+        if let value = defaults.string(forKey: DefaultsKey.notify) {
+            let kinds = value == "all" ? NotificationKind.allCases : value.split(separator: ",").compactMap { NotificationKind(rawValue: String($0)) }
+            let allowed = await notifier.requestAuthorization()
+            notificationAuthorization = await notifier.authorizationStatus()
+            guard allowed else {
+                debugLog("-notify: notifications aren't allowed")
+                return
+            }
+            for (index, kind) in kinds.enumerated() {
+                guard var message = debugNotification(kind) else {
+                    debugLog("-notify \(kind.rawValue): no data to notify about")
+                    continue
+                }
+                message.id += "-debug"
+                do {
+                    // A few seconds apart, so each banner can be seen (and screenshotted) on its own.
+                    try await notifier.post(message, delay: 3 + Double(index) * 8)
+                    debugLog("Debug notification \(kind.rawValue): \(message.title) | \(message.subtitle) | \(message.body) | route \(message.route)")
+                } catch {
+                    debugLog("-notify \(kind.rawValue) failed: \(error)")
+                }
+            }
+        }
+        if let kind = defaults.string(forKey: DefaultsKey.notifyOpen).flatMap(NotificationKind.init(rawValue:)),
+           let message = debugNotification(kind) {
+            handleNotificationTap(userInfo: [NotificationService.routeKey: message.route])
+        }
+    }
+
+    private func debugNotification(_ kind: NotificationKind) -> NotificationMessage? {
+        let calendar = Calendar.current
+        let standIn = PlannedDay(day: "", sport: Sport.running, intensity: .hard, session: "Tempo run", durationMinutes: 50, targetZone: 4, details: "")
+        func planned(on date: Date) -> PlannedDay {
+            plannedSession(on: date).flatMap { $0.isRest ? nil : $0 } ?? standIn
+        }
+        switch kind {
+        case .readiness:
+            guard let readiness else { return nil }
+            return NotificationPlanner.readinessMessage(readiness, planned: planned(on: .now), now: .now, calendar: calendar)
+        case .workout:
+            return workoutsNewestFirst.first.map(NotificationPlanner.workoutMessage)
+        case .session:
+            // The next session Stride put in the calendar, or one made up for a moment from now.
+            let lead = notificationSettings.reminderLeadMinutes
+            let event = schedule.busy.first { $0.isSession && $0.start > .now } ?? {
+                let start = Date.now.addingTimeInterval(TimeInterval(lead * 60))
+                let session = planned(on: start)
+                return BusyInterval(
+                    start: start, end: start.addingTimeInterval(TimeInterval(max(session.durationMinutes, 15) * 60)),
+                    title: session.session, sessionDate: calendar.startOfDay(for: start)
+                )
+            }()
+            let session = planned(on: event.start)
+            return NotificationPlanner.sessionMessage(
+                event, planned: session, weather: NotificationPlanner.weather(for: event, sport: session.sport, forecast: schedule.forecast),
+                leadMinutes: lead, fireDate: nil, calendar: calendar
+            )
+        }
     }
 }
 #endif
