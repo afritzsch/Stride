@@ -8,6 +8,8 @@ func runOfflineChecks() async {
     checkPlanCheck()
     checkReadiness()
     checkRaceForecast()
+    checkPlanAutoFix()
+    checkAIStrategy()
     await checkPlanRepair()
     checkLegacyHistory()
     checkSessionScheduler()
@@ -40,40 +42,121 @@ func checkLegacyHistory() {
     }
 }
 
-/// Repair with stand-in generators: a fix is kept only when it has fewer problems.
+/// Repair with stand-in generators: a fix is kept only when it has fewer problems. Free time is the rule only the
+/// model can fix, so these plans break it.
 func checkPlanRepair() async {
     section("Plan repair")
     let scenario = Scenario.demoWithHistory()
     let labels = scenario.planLabels
     var profile = UserProfile()
     profile.trainingDaysPerWeek = 3
-    profile.weeklyHoursAvailable = 3
+    profile.weeklyHoursAvailable = 4
     func day(_ index: Int, _ intensity: SessionIntensity, _ minutes: Int) -> PlannedDay {
         PlannedDay(day: labels[index], sport: intensity == .rest ? "Rest" : "Running", intensity: intensity, session: "s", durationMinutes: minutes, targetZone: intensity == .rest ? 0 : 2, details: "")
     }
-    let broken = [day(0, .hard, 60), day(1, .hard, 60), day(2, .easy, 40), day(3, .easy, 40), day(4, .rest, 0), day(5, .moderate, 90), day(6, .rest, 0)]
-    let fixed = [day(0, .hard, 50), day(1, .rest, 0), day(2, .easy, 40), day(3, .rest, 0), day(4, .rest, 0), day(5, .moderate, 90), day(6, .rest, 0)]
+    // Day 5 has a 90-min session but only 45 free minutes.
+    let context = PlanContext(freeMinutes: [120, 120, 120, 120, 120, 45, 120])
+    let broken = [day(0, .hard, 50), day(1, .rest, 0), day(2, .easy, 40), day(3, .rest, 0), day(4, .rest, 0), day(5, .moderate, 90), day(6, .rest, 0)]
+    let fixed = [day(0, .hard, 50), day(1, .rest, 0), day(2, .easy, 40), day(3, .rest, 0), day(4, .moderate, 90), day(5, .rest, 0), day(6, .rest, 0)]
     func report(_ plan: [PlannedDay]) -> AnalysisReport {
         AnalysisReport(headline: "h", trainingStatus: .productive, assessment: "a", insights: [], recommendations: [], goalOutlook: "", weekPlan: plan)
     }
+    let before = PlanCheck.problems(broken, labels: labels, profile: profile, context: context)
+    check(before.count == 1 && before[0].contains("45 min free"), "free time is checked: \(before)")
 
     var good = report(broken)
-    let left = await PlanRepair.run(&good, labels: labels, profile: profile) { _, _ in WeekPlan(days: fixed) }
-    check(left.isEmpty && good.weekPlan == fixed, "a valid fix is taken: \(left)")
+    var repairPrompt = ""
+    let left = await PlanRepair.run(&good, labels: labels, profile: profile, context: context) { _, prompt in repairPrompt = prompt; return WeekPlan(days: fixed) }
+    check(left.problems.isEmpty && good.weekPlan == fixed, "a valid fix is taken: \(left)")
+    check(repairPrompt.contains("LONGEST FREE TIME") && repairPrompt.contains("\(labels[5]) 45 min"), "the repair prompt has the free time")
 
     var worse = report(broken)
-    let before = PlanCheck.problems(broken, labels: labels, profile: profile)
-    let kept = await PlanRepair.run(&worse, labels: labels, profile: profile) { _, _ in WeekPlan(days: Array(fixed.prefix(5))) }
-    check(kept == before && worse.weekPlan == broken, "a worse fix is ignored")
+    let kept = await PlanRepair.run(&worse, labels: labels, profile: profile, context: context) { _, _ in WeekPlan(days: Array(fixed.prefix(5))) }
+    check(kept.problems == before && worse.weekPlan == broken, "a worse fix is ignored")
 
     var failing = report(broken)
-    let failed = await PlanRepair.run(&failing, labels: labels, profile: profile) { _, _ in throw CancellationError() }
-    check(failed == before, "a failed repair keeps the problems")
+    let failed = await PlanRepair.run(&failing, labels: labels, profile: profile, context: context) { _, _ in throw CancellationError() }
+    check(failed.problems == before, "a failed repair keeps the problems")
+
+    // The model's fix goes through the same code fixes: here it fixes the free time but adds hard days in a row.
+    var sloppy = report(broken)
+    var sloppyFix = fixed
+    sloppyFix[1] = day(1, .hard, 40)
+    let mended = await PlanRepair.run(&sloppy, labels: labels, profile: profile, context: context) { _, _ in WeekPlan(days: sloppyFix) }
+    check(mended.problems.isEmpty && sloppy.weekPlan[1].intensity == .easy, "code fixes the model's fix too: \(mended)")
 
     var valid = report(fixed)
     var called = false
-    _ = await PlanRepair.run(&valid, labels: labels, profile: profile) { _, _ in called = true; return WeekPlan(days: fixed) }
-    check(!called, "no repair call for a valid plan")
+    let none = await PlanRepair.run(&valid, labels: labels, profile: profile, context: context) { _, _ in called = true; return WeekPlan(days: fixed) }
+    check(!called && none == PlanRepair.Outcome(), "no repair call and no changes for a valid plan")
+
+    // Rules code can fix never reach the model.
+    var codeOnly = report([day(0, .hard, 60), day(1, .hard, 60), day(2, .easy, 40), day(3, .easy, 40), day(4, .rest, 0), day(5, .moderate, 90), day(6, .rest, 0)])
+    called = false
+    let byCode = await PlanRepair.run(&codeOnly, labels: labels, profile: profile) { _, _ in called = true; return WeekPlan(days: fixed) }
+    check(!called && byCode.problems.isEmpty && !byCode.changes.isEmpty, "training days, hours and hard days are fixed without the model: \(byCode)")
+}
+
+/// The fixes code makes without the model, and the rules that need recent training, recovery and the goal.
+func checkPlanAutoFix() {
+    section("Plan fixes in code")
+    let labels = Scenario.demoWithHistory().planLabels
+    var profile = UserProfile()
+    profile.trainingDaysPerWeek = 4
+    profile.weeklyHoursAvailable = 5
+    func day(_ index: Int, _ intensity: SessionIntensity, _ minutes: Int, zone: Int = 2) -> PlannedDay {
+        PlannedDay(day: labels[index], sport: intensity == .rest ? "Rest" : "Running", intensity: intensity, session: "s", durationMinutes: minutes, targetZone: intensity == .rest ? 0 : zone, details: "d")
+    }
+    func minutes(_ plan: [PlannedDay]) -> Int { plan.map(\.durationMinutes).reduce(0, +) }
+
+    // Six training days, 430 min, two hard days in a row; day 1 is the athlete's own.
+    let broken = [day(0, .hard, 60, zone: 4), day(1, .hard, 70, zone: 4), day(2, .easy, 30), day(3, .easy, 60), day(4, .moderate, 90), day(5, .easy, 100), day(6, .easy, 20)]
+    let (plan, changes) = PlanCheck.autoFix(broken, profile: profile, pinned: [1])
+    changes.forEach { print("  · \($0)") }
+    check(PlanCheck.problems(plan, labels: labels, profile: profile).isEmpty, "all fixed: \(PlanCheck.problems(plan, labels: labels, profile: profile))")
+    check(plan[1] == broken[1], "the athlete's day is untouched")
+    check(plan[0].intensity == .easy && plan[0].targetZone == 2 && plan[0].session == "Easy run", "the coach's hard day next to the athlete's is eased: \(plan[0])")
+    check(plan[6].isRest && plan[2].isRest, "the shortest easy days become rest")
+    check(minutes(plan) <= 300 && plan.allSatisfy { $0.isRest || $0.durationMinutes >= PlanCheck.shortestSession }, "cut to the weekly hours: \(minutes(plan)) min")
+    check(plan[4].durationMinutes == 90, "easy sessions are cut before moderate ones")
+
+    let sessionless = PlanCheck.autoFix([day(0, .easy, 0)] + (1..<7).map { day($0, .rest, 0) }, profile: profile).plan
+    check(sessionless[0].isRest, "a session without minutes becomes rest")
+
+    // Recent training: the usual week is 200 min.
+    let growing = [day(0, .easy, 60), day(1, .rest, 0), day(2, .moderate, 60), day(3, .rest, 0), day(4, .easy, 60), day(5, .easy, 90), day(6, .rest, 0)]
+    let usual = PlanContext(recentWeeklyMinutes: 200)
+    let growth = PlanCheck.problems(growing, labels: labels, profile: profile, context: usual)
+    check(growth.count == 1 && growth[0].contains("10%") && growth[0].contains("cut 40 min"), "volume grows at most about 10%: \(growth)")
+    check(minutes(PlanCheck.autoFix(growing, profile: profile, context: usual).plan) <= 230, "growth is cut back")
+    check(PlanCheck.problems(growing, labels: labels, profile: profile, context: PlanContext(recentWeeklyMinutes: 40)).isEmpty, "no growth limit without a usual week to grow from")
+
+    let tired = PlanContext(recentWeeklyMinutes: 200, fatigue: ["sleep 6.2 h a night"])
+    let fatigue = PlanCheck.problems(growing, labels: labels, profile: profile, context: tired)
+    check(fatigue.count == 1 && fatigue[0].contains("sleep 6.2 h") && fatigue[0].contains("cut 70 min"), "no growth while recovery is down: \(fatigue)")
+
+    // The goal is on day 5: a taper to 60% (120 min) not counting the race, and no hard day before it.
+    var raceWeek = growing
+    raceWeek[4] = day(4, .hard, 40, zone: 4)
+    raceWeek[5] = PlannedDay(day: labels[5], sport: "Running", intensity: .hard, session: "Race", durationMinutes: 110, targetZone: 4, details: "")
+    let taperContext = PlanContext(recentWeeklyMinutes: 200, daysToGoal: 5, goalTitle: "Half marathon")
+    let taper = PlanCheck.problems(raceWeek, labels: labels, profile: profile, context: taperContext)
+    taper.forEach { print("  · \($0)") }
+    check(taper.contains { $0.contains("taper") && $0.contains("160 min") }, "the week before the goal tapers, not counting the race")
+    check(taper.contains { $0.contains("day before the Half marathon") }, "no hard day before the goal")
+    check(taper.contains { $0.contains("both hard") }, "the race after a hard day is two hard days in a row")
+    let tapered = PlanCheck.autoFix(raceWeek, profile: profile, context: taperContext).plan
+    check(PlanCheck.problems(tapered, labels: labels, profile: profile, context: taperContext).isEmpty, "the taper is fixed in code")
+    check(tapered[5] == raceWeek[5], "the race day itself is kept")
+
+    // Limits from real metrics: demo data has weeks of history.
+    let scenario = Scenario.demoWithHistory()
+    let context = PlanContext(metrics: scenario.metrics, profile: scenario.profile, planStart: scenario.planStart, calendar: scenario.calendar)
+    print("  demo: usual week \(PromptBuilder.num(context.recentWeeklyMinutes, 0)) min, fatigue: \(context.fatigue)")
+    check(context.recentWeeklyMinutes != nil, "a usual week from demo data")
+    let limit = PlanCheck.minuteLimits(profile: scenario.profile, context: context).min { $0.minutes < $1.minutes }!
+    check(scenario.weeklyPrompt(compact: true).contains("PLAN LIMIT: at most \(limit.minutes) min"), "the prompt states the limit the plan is checked against")
+    check(!scenario.weeklyPrompt(compact: true, part: .assessment).contains("PLAN LIMIT"), "the assessment step leaves the limit out")
 }
 
 func checkPlanAdherence() {
@@ -275,4 +358,50 @@ func checkRaceForecast() {
     check(forecast.brief.contains("Half marathon") && forecast.brief.contains("Quote these times"), "brief names the race and tells the model to quote it")
     check(RaceForecast.make(distanceKm: 5, raceDate: now, workouts: [run(80, km: 10, minutes: 60)], experience: .advanced, now: now) == nil, "no forecast from runs older than 8 weeks")
     print(forecast.brief)
+}
+
+/// The rest of the AI strategy: per-step instructions, the computed status, feedback from adjustments, the chat's
+/// instructions after a restart, and strength reviews without an effort.
+func checkAIStrategy() {
+    section("AI strategy")
+    let report = PromptBuilder.instructions(for: .report)
+    let assessment = PromptBuilder.instructions(for: .assessment)
+    let plan = PromptBuilder.instructions(for: .plan(assessment: "x"))
+    print("  instructions: report \(report.count), assessment \(assessment.count), plan \(plan.count) characters")
+    check(assessment.count < report.count && plan.count < report.count, "each step's instructions are shorter than the whole report's")
+    check(!assessment.contains("FREE TIME") && !assessment.contains("THE ATHLETE'S OWN PLAN"), "the assessment step has no plan rules")
+    check(!plan.contains("COACH LOG") && !plan.contains("dieting"), "the plan step has no assessment rules")
+    check(report.contains("FREE TIME") && report.contains("COACH LOG") && report.contains("PLAN LIMIT"), "the one-request report has all rules")
+
+    let scenario = Scenario.demoWithHistory()
+    let status = TrainingStatus.measured(scenario.metrics, now: scenario.snapshot.fetchedAt, calendar: scenario.calendar)
+    print("  demo training status: \(status.rawValue)")
+    check(status != .insufficientData, "demo data has enough history for a status")
+    check(scenario.weeklyPrompt(compact: true).contains("Training status (computed from load and recovery): \(status.rawValue)"), "the brief gives the computed status")
+    var empty = scenario
+    empty.snapshot.workouts = []
+    check(TrainingStatus.measured(empty.metrics, now: empty.snapshot.fetchedAt, calendar: empty.calendar) == .insufficientData, "no workouts: not enough data")
+
+    let planned = PlannedDay(day: scenario.label(-1), sport: "Running", intensity: .hard, session: "Intervals", durationMinutes: 50, targetZone: 4, details: "")
+    let lighter = PlannedDay(day: scenario.label(-1), sport: "Running", intensity: .easy, session: "Easy run", durationMinutes: 30, targetZone: 2, details: "")
+    var adjustment = SavedAdjustment(date: scenario.day(-1), original: planned, adjustment: DayAdjustment(reason: "Low HRV", session: lighter), state: .declined)
+    func prompt(_ adjustment: SavedAdjustment) -> String {
+        PromptBuilder(
+            snapshot: scenario.snapshot, metrics: scenario.metrics, profile: scenario.profile, planStart: scenario.planStart,
+            compact: true, history: scenario.history, adjustment: adjustment, calendar: scenario.calendar
+        ).prompt
+    }
+    check(prompt(adjustment).contains("READINESS ADJUSTMENTS") && prompt(adjustment).contains("kept the planned session"), "a declined adjustment reaches the weekly brief")
+    adjustment.state = .suggested
+    check(!prompt(adjustment).contains("READINESS ADJUSTMENTS"), "an open suggestion doesn't")
+
+    let chat = CoachTools.instructions(
+        profile: scenario.profile, zones: scenario.metrics.heartRateZones, readiness: nil, lastVerdict: nil,
+        earlier: [("Move tomorrow's run?", "Done: tomorrow is now an easy 30-min run.")]
+    )
+    check(chat.contains("EARLIER IN THIS CONVERSATION") && chat.contains("You: Done: tomorrow"), "a restarted chat keeps the last exchanges")
+    check(!CoachTools.instructions(profile: scenario.profile, zones: scenario.metrics.heartRateZones, readiness: nil, lastVerdict: nil).contains("EARLIER"), "a new chat has none")
+
+    let review = StrengthReview(headline: "h", summary: [], planComparison: "", highlights: [], improvements: [], recovery: "", nextSession: "")
+    check(review.analysis.effort == nil, "a strength review has no effort")
 }

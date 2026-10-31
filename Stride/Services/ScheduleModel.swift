@@ -93,6 +93,18 @@ final class ScheduleModel {
         }
     }
 
+    /// For checking the weekly plan: the longest free stretch per plan day in minutes, nil when suggestions are off.
+    func longestFreeMinutes(start: Date) -> [Int]? {
+        guard isActive else { return nil }
+        let calendar = Calendar.current
+        // The athlete's own session events are part of the plan, not something to plan around.
+        let blocking = busy.filter { !$0.isSession }
+        return (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: start) }.map { date in
+            let gaps = SessionScheduler.freeGaps(on: date, busy: blocking, settings: settings, calendar: calendar)
+            return Int((gaps.map(\.duration).max() ?? 0) / 60)
+        }
+    }
+
     // MARK: - Loading
 
     func refresh(forceWeather: Bool = false) async {

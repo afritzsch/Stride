@@ -160,15 +160,13 @@ func checkAthletePlan() async {
     // The model plans an easy day over the athlete's hard one, and a hard day right after it.
     let generated = [day(0, .easy, 40), day(1, .hard, 50), day(2, .rest, 0), day(3, .easy, 40), day(4, .rest, 0), day(5, .moderate, 60), day(6, .rest, 0)]
     var report = AnalysisReport(headline: "", trainingStatus: .productive, assessment: "", insights: [], recommendations: [], goalOutlook: "", weekPlan: generated)
-    var repairPrompt = ""
-    let left = await PlanRepair.run(&report, labels: labels, profile: scenario.profile, pinned: pinned) { _, prompt in
-        repairPrompt = prompt
-        var fixed = generated
-        fixed[0] = day(0, .rest, 0)   // the model tries to change the athlete's day too
-        fixed[1] = day(1, .easy, 40)
-        return WeekPlan(days: fixed)
+    var called = false
+    let left = await PlanRepair.run(&report, labels: labels, profile: scenario.profile, pinned: pinned) { _, _ in
+        called = true
+        return WeekPlan(days: generated)
     }
-    check(report.weekPlan[0].session == "Hill repeats" && report.weekPlan[0].day == labels[0], "the athlete's day survives the repair")
-    check(left.isEmpty, "the repair fixes the day after it: \(left)")
+    check(report.weekPlan[0].session == "Hill repeats" && report.weekPlan[0].day == labels[0], "the athlete's day survives the fixes")
+    check(left.problems.isEmpty && report.weekPlan[1].intensity == .easy && !called, "code eases the day after it, without the model: \(left)")
+    let repairPrompt = PlanRepair.prompt(plan: report.weekPlan, problems: ["x"], profile: scenario.profile, reasoning: "", pinnedLabels: [labels[0]])
     check(repairPrompt.contains("planned \(labels[0]) themselves"), "the repair prompt names the athlete's days")
 }

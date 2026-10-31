@@ -20,9 +20,16 @@ final class CoachChat {
     /// What the coach is looking up right now, e.g. "Looking at your workouts…".
     private(set) var activity: String?
     var error: String?
+    /// Notices of changes the athlete can still undo (a plan day, a calendar session).
+    private(set) var undoable: Set<UUID> = []
 
     @ObservationIgnored private weak var model: AppModel?
     @ObservationIgnored private var session: LanguageModelSession?
+    @ObservationIgnored private var undoActions: [UUID: @MainActor () -> Void] = [:]
+    /// Set when a tool changed the plan or calendar while answering the current message.
+    @ObservationIgnored private var changedThisTurn = false
+    /// Changes the athlete undid since the coach last answered, told to the model with the next message.
+    @ObservationIgnored private var undoneChanges: [String] = []
 
     init(model: AppModel) {
         self.model = model
@@ -44,22 +51,32 @@ final class CoachChat {
             activity = nil
         }
 
+        changedThisTurn = false
+        let prompt = undoneChanges.isEmpty ? text : "(I undid this change: \(undoneChanges.joined(separator: " "))) \(text)"
+        undoneChanges = []
+        var earlier: [(athlete: String, coach: String)] = []
         for attempt in 1...2 {
-            let session = self.session ?? makeSession(model: model)
+            let session = self.session ?? makeSession(model: model, earlier: earlier)
             self.session = session
             messages.append(ChatMessage(role: .coach, text: ""))
             let index = messages.count - 1
             do {
-                for try await snapshot in session.streamResponse(to: text) {
+                for try await snapshot in session.streamResponse(to: prompt) {
                     activity = nil
                     messages[index].text = snapshot.content
                 }
                 return
             } catch LanguageModelError.contextSizeExceeded where attempt == 1 {
-                // The window is small: start over with fresh context and ask again.
+                // The window is small: start over, keeping the last exchanges as text instead of the tool output.
                 messages.remove(at: index)
-                messages.append(ChatMessage(role: .notice, text: "The conversation got long, so the coach started fresh."))
                 self.session = nil
+                if changedThisTurn {
+                    // Asking again would repeat the change (and its undo would only undo the repeat).
+                    notice("The conversation got long, so the coach started fresh. Your change is saved.")
+                    return
+                }
+                notice("The conversation got long, so the coach started fresh.")
+                earlier = Self.lastExchanges(in: messages.dropLast(2))
             } catch {
                 messages.remove(at: index)
                 self.error = Self.describe(error)
@@ -69,11 +86,30 @@ final class CoachChat {
         }
     }
 
+    /// Up to two athlete/coach exchanges from the end of a conversation, without notices.
+    private static func lastExchanges(in messages: ArraySlice<ChatMessage>) -> [(athlete: String, coach: String)] {
+        var exchanges: [(athlete: String, coach: String)] = []
+        var reply: String?
+        for message in messages.reversed() where exchanges.count < 2 {
+            switch message.role {
+            case .coach where !message.text.isEmpty: reply = message.text
+            case .athlete:
+                if let coach = reply { exchanges.insert((message.text, coach), at: 0) }
+                reply = nil
+            default: break
+            }
+        }
+        return exchanges
+    }
+
     func reset() {
         guard !isResponding else { return }
         messages = []
         session = nil
         error = nil
+        undoable = []
+        undoActions = [:]
+        undoneChanges = []
     }
 
     /// Loads the model while the athlete is typing.
@@ -88,47 +124,32 @@ final class CoachChat {
 
     func notice(_ text: String) { messages.append(ChatMessage(role: .notice, text: text)) }
 
-    private func makeSession(model: AppModel) -> LanguageModelSession {
-        LanguageModelSession(
-            tools: CoachTools.all(CoachToolbox(model: model, chat: self)),
-            instructions: Self.instructions(model: model)
-        )
+    /// A notice of a change the coach made, with a way to take it back.
+    func change(_ text: String, undo: @escaping @MainActor () -> Void) {
+        let message = ChatMessage(role: .notice, text: text)
+        messages.append(message)
+        undoable.insert(message.id)
+        undoActions[message.id] = undo
+        changedThisTurn = true
     }
 
-    private static func instructions(model: AppModel) -> String {
-        let calendar = Calendar.current
-        var lines = [
-            """
-            You are an experienced endurance coach chatting with your athlete in a phone app. Their watch data is \
-            available through your tools: use them before answering questions about their training, recovery or \
-            plan, and cite the numbers you find. Never invent data; if a tool has nothing, say so. When asked for a \
-            prognosis, prediction or what to expect (fitness, race time, reaching the goal), always give your best \
-            estimate: call trends first, then answer with a concrete range, the numbers it rests on and how sure you \
-            are. For race times, call raceForecast and quote its times exactly; never calculate a time yourself. \
-            Projecting from their data is coaching, not inventing data, and a training prognosis is not medical \
-            advice. Change the plan only when the athlete asks for it, keep changes consistent with their \
-            availability, and tell them what you changed. For when to train, use freeTimes (calendar and weather); add a \
-            session to the calendar only when the athlete asks. Only for pain, injury or illness, recommend seeing a \
-            professional. Answer in a few short sentences, addressing the athlete as "you".
-            """,
-            "",
-            "TODAY: \(PromptBuilder.dayLabel(.now, calendar: calendar))",
-        ]
-        let profile = model.profile
-        lines.append("ATHLETE: \(profile.primarySport), \(profile.experience.rawValue); \(profile.trainingDaysPerWeek) training days and \(PromptBuilder.num(profile.weeklyHoursAvailable, 1)) h a week")
-        lines.append("HR ZONES: \(model.heartRateZones.summary)")
-        if profile.hasGoal {
-            lines.append("GOAL: \(PromptBuilder.goalSummary(profile, calendar: calendar))")
-        }
-        if !profile.notes.isEmpty { lines.append("ATHLETE NOTES: \(PromptBuilder.quote(profile.notes))") }
-        if let readiness = model.readiness, readiness.level != .unknown {
-            let signals = readiness.signals.map(\.text).joined(separator: "; ")
-            lines.append("THIS MORNING: \(readiness.level.title.lowercased())\(signals.isEmpty ? "" : " (\(signals))")")
-        }
-        if let latest = model.latestAnalysis {
-            lines.append("YOUR LAST WEEKLY VERDICT (\(PromptBuilder.dayLabel(latest.createdAt, calendar: calendar))): \(latest.report.headline)")
-        }
-        return lines.joined(separator: "\n")
+    func undo(_ id: UUID) {
+        guard undoable.remove(id) != nil, let action = undoActions.removeValue(forKey: id) else { return }
+        action()
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        // The session still remembers the change: tell it with the next message, so it doesn't build on it.
+        undoneChanges.append(messages[index].text)
+        messages[index].text += " Undone."
+    }
+
+    private func makeSession(model: AppModel, earlier: [(athlete: String, coach: String)] = []) -> LanguageModelSession {
+        LanguageModelSession(
+            tools: CoachTools.all(CoachToolbox(model: model, chat: self)),
+            instructions: CoachTools.instructions(
+                profile: model.profile, zones: model.heartRateZones, readiness: model.readiness,
+                lastVerdict: model.latestAnalysis, earlier: earlier
+            )
+        )
     }
 
     private static func describe(_ error: Error) -> String {

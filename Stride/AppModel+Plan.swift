@@ -31,7 +31,7 @@ extension AppModel {
         defer { isAdjustingToday = false }
         let prompt = DayAdjustment.prompt(planned: planned, readiness: readiness, metrics: metrics, profile: profile)
         do {
-            let result = try await generate(DayAdjustment.self, instructions: DayAdjustment.instructions, fullPrompt: prompt, compactPrompt: prompt)
+            let result = try await generate(DayAdjustment.self, instructions: DayAdjustment.instructions, fullPrompt: prompt, compactPrompt: prompt, options: AppleAnalyzer.precise)
             todayAdjustment = SavedAdjustment(date: .now, original: planned, adjustment: result.output.clamped(to: planned))
         } catch {
             // An automatic attempt fails quietly; the button stays for a manual retry.

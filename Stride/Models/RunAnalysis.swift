@@ -73,6 +73,49 @@ nonisolated extension RunAnalysis {
     }
 }
 
+/// The review of a strength, core or mobility session: `RunAnalysis` without `effort`, because heart rate says
+/// little about lifting and a guessed "easy" would shape the headline written right after it. Keep the guides in
+/// step with `RunAnalysis`.
+@Generable
+nonisolated struct StrengthReview: Sendable {
+    @Guide(description: "A short verdict of at most 12 words, e.g. \"Solid gym session before a long run\"")
+    var headline: String
+    @Guide(description: "Short bullet points interpreting the session, each under 15 words: what kind of session it was, how the work went, what it means for training. The athlete already sees the stats, so don't list them", .count(2...4))
+    var summary: [String]
+    @Guide(description: "One sentence on how the session compared to what was planned for that day, or an empty string if nothing was planned")
+    var planComparison: String
+    @Guide(description: "What the athlete did well in this session, each a short bullet point", .count(1...3))
+    var highlights: [String]
+    @Guide(description: "Specific changes to the session, training, fueling or recovery, each a short bullet point. Never about the watch or how data is recorded", .count(1...3))
+    var improvements: [String]
+    @Guide(description: "1-2 sentences of recovery advice for the next 24-48 hours")
+    var recovery: String
+    @Guide(description: "1-2 sentences: what the next session should be and why")
+    var nextSession: String
+
+    var analysis: RunAnalysis {
+        RunAnalysis(
+            effort: nil, headline: headline, summary: summary, planComparison: planComparison, highlights: highlights,
+            improvements: improvements, recovery: recovery, nextSession: nextSession
+        )
+    }
+}
+
+nonisolated extension RunAnalysis.PartiallyGenerated {
+    /// A preview of a strength review while it streams.
+    init?(_ review: StrengthReview.PartiallyGenerated) {
+        guard var preview = try? Self(GeneratedContent(properties: [:])) else { return nil }
+        preview.headline = review.headline
+        preview.summary = review.summary
+        preview.planComparison = review.planComparison
+        preview.highlights = review.highlights
+        preview.improvements = review.improvements
+        preview.recovery = review.recovery
+        preview.nextSession = review.nextSession
+        self = preview
+    }
+}
+
 nonisolated struct SavedRunAnalysis: Codable, Hashable, Sendable {
     var workoutID: UUID
     var createdAt: Date

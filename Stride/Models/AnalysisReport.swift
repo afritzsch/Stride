@@ -17,6 +17,26 @@ nonisolated enum TrainingStatus: String, Codable, CaseIterable, Sendable {
         case .insufficientData: "Not enough data"
         }
     }
+
+    /// The status from load and recovery, so it doesn't depend on the model reading the numbers right (the brief
+    /// gives it to the model, and the report's value is replaced with it). Productive: load rising (ACWR 1.0–1.5)
+    /// without fatigue signals; overreaching: ACWR above 1.5, or above 1.3 with fatigue; under 0.8 it's recovering,
+    /// or detraining when the last 4 weeks carried 20% less load than the 4 before and recovery is fine.
+    static func measured(_ metrics: MetricsReport, now: Date, calendar: Calendar = .current) -> TrainingStatus {
+        let ind = metrics.indicators
+        let today = calendar.startOfDay(for: now)
+        let complete = metrics.weeks.filter { (calendar.date(byAdding: .day, value: 7, to: $0.weekStart) ?? $0.weekStart) <= today }
+        guard let acwr = ind.acwr, ind.chronicLoad > 0, complete.count >= 3 else { return .insufficientData }
+        let tired = !ind.fatigueSignals.isEmpty
+        if acwr > 1.5 || (acwr > 1.3 && tired) { return .overreaching }
+        if acwr < 0.8 {
+            func mean(_ weeks: some Collection<WeeklySummary>) -> Double { weeks.map(\.load).reduce(0, +) / Double(max(weeks.count, 1)) }
+            let recent = complete.suffix(4), earlier = complete.dropLast(4).suffix(4)
+            if !tired, earlier.count >= 2, mean(recent) < mean(earlier) * 0.8 { return .detraining }
+            return .recovering
+        }
+        return acwr >= 1.0 && !tired ? .productive : .maintaining
+    }
 }
 
 @Generable
@@ -128,13 +148,16 @@ nonisolated extension PlannedDay {
 
 @Generable
 nonisolated struct AnalysisReport: Codable, Hashable, Sendable {
-    @Guide(description: "One-sentence headline with the single most important finding")
-    var headline: String
+    // Generation follows declaration order: the evidence comes before the verdict, so a small model doesn't commit
+    // to a headline first and then argue for it.
+    @Guide(description: "The training status computed in the brief")
     var trainingStatus: TrainingStatus
-    @Guide(description: "Overall assessment in 2-4 sentences")
-    var assessment: String
     @Guide(description: "Key observations across training, sleep and activity", .count(3...6))
     var insights: [Insight]
+    @Guide(description: "Overall assessment in 2-4 sentences")
+    var assessment: String
+    @Guide(description: "One-sentence headline with the single most important finding")
+    var headline: String
     @Guide(description: "Prioritized changes the athlete should make", .count(3...5))
     var recommendations: [Recommendation]
     @Guide(description: "Outlook toward the goal event, or an empty string if there is no goal")
@@ -143,18 +166,31 @@ nonisolated struct AnalysisReport: Codable, Hashable, Sendable {
     var weekPlan: [PlannedDay]
 }
 
+nonisolated extension AnalysisReport {
+    init(
+        headline: String, trainingStatus: TrainingStatus, assessment: String, insights: [Insight],
+        recommendations: [Recommendation], goalOutlook: String, weekPlan: [PlannedDay]
+    ) {
+        self.init(
+            trainingStatus: trainingStatus, insights: insights, assessment: assessment, headline: headline,
+            recommendations: recommendations, goalOutlook: goalOutlook, weekPlan: weekPlan
+        )
+    }
+}
+
 /// The report without its plan. The iPhone's on-device model (4096-token window) can't fit the brief and the whole
 /// report, so it writes this first and the plan (`WeekPlan`) in a second request. Keep the guides in step with
 /// `AnalysisReport`.
 @Generable
 nonisolated struct AnalysisAssessment: Sendable {
-    @Guide(description: "One-sentence headline with the single most important finding")
-    var headline: String
+    @Guide(description: "The training status computed in the brief")
     var trainingStatus: TrainingStatus
-    @Guide(description: "Overall assessment in 2-4 sentences")
-    var assessment: String
     @Guide(description: "Key observations across training, sleep and activity", .count(3...6))
     var insights: [Insight]
+    @Guide(description: "Overall assessment in 2-4 sentences")
+    var assessment: String
+    @Guide(description: "One-sentence headline with the single most important finding")
+    var headline: String
     @Guide(description: "Prioritized changes the athlete should make", .count(3...5))
     var recommendations: [Recommendation]
     @Guide(description: "Outlook toward the goal event, or an empty string if there is no goal")

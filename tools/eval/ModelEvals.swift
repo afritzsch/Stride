@@ -25,6 +25,9 @@ func runModelEvals(filter: String?) async {
     if filter == nil || "adjust".contains(filter!) {
         await evalAdjustment(Scenario.demoWithHistory())
     }
+    if filter == nil || "chat".contains(filter!) {
+        await evalChat(Scenario.demoWithHistory())
+    }
 }
 
 private func tokens(_ instructions: String, _ prompt: String, _ schema: GenerationSchema) async -> Int? {
@@ -66,12 +69,14 @@ private func evalWeekly(_ scenario: Scenario) async {
         print("  output \(outputTokens ?? -1) tokens; instructions \(instructionTokens ?? -1), schema \(schemaTokens ?? -1)")
         print("  headline: \(report.headline) [\(report.trainingStatus.rawValue)]")
         let labels = scenario.planLabels
-        let raw = PlanCheck.problems(PlanCheck.normalized(report.weekPlan, labels: labels), labels: labels, profile: scenario.profile)
+        let context = PlanContext(metrics: scenario.metrics, profile: scenario.profile, planStart: scenario.planStart, calendar: scenario.calendar)
+        let raw = PlanCheck.problems(PlanCheck.normalized(report.weekPlan, labels: labels), labels: labels, profile: scenario.profile, context: context)
         let labelsRight = report.weekPlan.map(\.day) == labels
-        let left = await PlanRepair.run(&report, labels: labels, profile: scenario.profile, log: { print("  \($0)") }) { instructions, prompt in
-            try await AppleAnalyzer(allowPrivateCloud: false).analyze(WeekPlan.self, instructions: instructions, fullPrompt: prompt, compactPrompt: prompt).report
+        let outcome = await PlanRepair.run(&report, labels: labels, profile: scenario.profile, context: context, log: { print("  \($0)") }) { instructions, prompt in
+            try await AppleAnalyzer(allowPrivateCloud: false).analyze(WeekPlan.self, instructions: instructions, fullPrompt: prompt, compactPrompt: prompt, options: AppleAnalyzer.precise).report
         }
-        print("  labels as asked: \(labelsRight); problems before repair: \(raw.count), after: \(left.count)")
+        // Problems the model left before any fixes: the number to watch across prompt changes and iOS updates.
+        print("  labels as asked: \(labelsRight); problems as generated: \(raw.count), fixed in code: \(outcome.changes.count) changes, left: \(outcome.problems.count)")
         for day in report.weekPlan {
             print("    \(day.day) | \(day.sport) | \(day.intensity.rawValue) | \(day.session) | \(day.durationMinutes) min | Z\(day.targetZone)")
         }
@@ -95,9 +100,8 @@ private func evalWeeklyInSteps(_ scenario: Scenario) async {
     section("Weekly analysis in two steps (iPhone window)")
     let model = SystemLanguageModel.default
     let phoneWindow = 4096
-    let instructions = PromptBuilder.instructions
     let analyzer = AppleAnalyzer(allowPrivateCloud: false)
-    func report(_ name: String, prompt: String, schema: GenerationSchema, output: GeneratedContent) async {
+    func report(_ name: String, instructions: String, prompt: String, schema: GenerationSchema, output: GeneratedContent) async {
         let input = await tokens(instructions, prompt, schema) ?? -1
         let out = (try? await model.tokenCount(for: output.jsonString)) ?? -1
         print("  \(name): \(input) in + \(out) out = \(input + out) of \(phoneWindow)")
@@ -105,17 +109,20 @@ private func evalWeeklyInSteps(_ scenario: Scenario) async {
     }
     do {
         let assessmentPrompt = scenario.weeklyPrompt(compact: true, part: .assessment)
+        let assessmentInstructions = PromptBuilder.instructions(for: .assessment)
         let assessment = try await analyzer.analyze(
-            AnalysisAssessment.self, instructions: instructions, fullPrompt: assessmentPrompt, compactPrompt: assessmentPrompt
+            AnalysisAssessment.self, instructions: assessmentInstructions, fullPrompt: assessmentPrompt, compactPrompt: assessmentPrompt
         ).report
-        await report("assessment", prompt: assessmentPrompt, schema: AnalysisAssessment.generationSchema, output: assessment.generatedContent)
+        await report("assessment", instructions: assessmentInstructions, prompt: assessmentPrompt, schema: AnalysisAssessment.generationSchema, output: assessment.generatedContent)
         print("  headline: \(assessment.headline) [\(assessment.trainingStatus.rawValue)]")
 
-        let planPrompt = scenario.weeklyPrompt(compact: true, part: .plan(assessment: "\(assessment.headline) \(assessment.assessment)"))
+        let part = PromptBuilder.Part.plan(assessment: "\(assessment.headline) \(assessment.assessment)")
+        let planPrompt = scenario.weeklyPrompt(compact: true, part: part)
+        let planInstructions = PromptBuilder.instructions(for: part)
         let plan = try await analyzer.analyze(
-            WeekPlan.self, instructions: instructions, fullPrompt: planPrompt, compactPrompt: planPrompt
+            WeekPlan.self, instructions: planInstructions, fullPrompt: planPrompt, compactPrompt: planPrompt, options: AppleAnalyzer.precise
         ).report
-        await report("plan", prompt: planPrompt, schema: WeekPlan.generationSchema, output: plan.generatedContent)
+        await report("plan", instructions: planInstructions, prompt: planPrompt, schema: WeekPlan.generationSchema, output: plan.generatedContent)
         for day in plan.days {
             print("    \(day.day) | \(day.sport) | \(day.intensity.rawValue) | \(day.session) | \(day.durationMinutes) min | Z\(day.targetZone)")
         }
@@ -147,7 +154,8 @@ private func evalRunReview(_ scenario: Scenario) async {
         let words = review.headline.split(separator: " ").count
         check(words <= 14, "headline is short (\(words) words)")
         let text = (review.summary + review.highlights + review.improvements + [review.recovery, review.nextSession]).joined(separator: " ")
-        check(!text.contains("–"), "doesn't echo missing-value dashes")
+        // A dash standing alone, as the brief writes a missing value; ranges like "Z4–Z5" are fine.
+        check(text.range(of: #"(^|\s)–($|[\s.,;])"#, options: .regularExpression) == nil, "doesn't echo missing-value dashes")
         print("  numbers not in the prompt: \(unsupportedNumbers(in: text, prompt: prompt(false)))")
     } catch {
         check(false, "run review: \(error)")
@@ -170,10 +178,10 @@ private func evalStrengthReview(_ scenario: Scenario) async {
         ).prompt
     }
     let instructions = RunPromptBuilder.instructions(for: .strength)
-    print("  tokens: \(await tokens(instructions, prompt(false), RunAnalysis.generationSchema) ?? -1)")
+    print("  tokens: \(await tokens(instructions, prompt(false), StrengthReview.generationSchema) ?? -1)")
     do {
         let review = try await AppleAnalyzer(allowPrivateCloud: false).analyze(
-            RunAnalysis.self, instructions: instructions, fullPrompt: prompt(false), compactPrompt: prompt(true)
+            StrengthReview.self, instructions: instructions, fullPrompt: prompt(false), compactPrompt: prompt(true)
         ).report
         print("  \(review.headline)")
         (review.summary + review.highlights + review.improvements).forEach { print("    • \($0)") }
@@ -202,11 +210,12 @@ private func evalAdjustment(_ scenario: Scenario) async {
     let prompt = DayAdjustment.prompt(planned: planned, readiness: readiness, metrics: scenario.metrics, profile: scenario.profile)
     do {
         let raw = try await AppleAnalyzer(allowPrivateCloud: false).analyze(
-            DayAdjustment.self, instructions: DayAdjustment.instructions, fullPrompt: prompt, compactPrompt: prompt
+            DayAdjustment.self, instructions: DayAdjustment.instructions, fullPrompt: prompt, compactPrompt: prompt, options: AppleAnalyzer.precise
         ).report
         let clamped = raw.clamped(to: planned)
-        print("  readiness \(readiness.level): \(raw.session.briefDescription) — \(raw.reason)")
-        check(raw.session == clamped.session, "model kept to the rules without clamping (raw \(raw.session.briefDescription))")
+        print("  readiness \(readiness.level): \(raw.session.briefDescription) [\(raw.session.sport), \(raw.session.intensity.rawValue), \(raw.session.durationMinutes) min, Z\(raw.session.targetZone)] — \(raw.reason)")
+        // Often a rest day with minutes left on it; `clamped(to:)` enforces the fields, so this is measured, not required.
+        print("  kept to the rules without clamping: \(raw.session == clamped.session)")
         check(clamped.session.intensity != .hard, "a hard session gets lighter on a low-readiness day")
     } catch {
         check(false, "adjustment: \(error)")
