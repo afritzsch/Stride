@@ -4,4 +4,8 @@ xcuserdata/
 DerivedData/
 build/
 
+# Python tooling (tools/stride-mcp)
+__pycache__/
+.venv/
+
 .DS_Store

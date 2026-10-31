@@ -123,7 +123,8 @@ struct Scenario {
             weekPlan: plan
         )
         scenario.history = [SavedAnalysis(createdAt: scenario.day(-7), modelName: "test", planStartDate: start, report: report)]
-        if let longRun = scenario.snapshot.workouts.last(where: { $0.sport == "Running" && $0.durationMinutes > 90 }) {
+        // The latest run, so the review is recent enough for the compact prompt (7 days) whatever today is.
+        if let longRun = scenario.snapshot.workouts.last(where: { $0.sport == Sport.running }) {
             let review = RunAnalysis(
                 effort: .moderate, headline: "Solid long run, faded late",
                 summary: [], planComparison: "", highlights: [], improvements: [], recovery: "", nextSession: ""

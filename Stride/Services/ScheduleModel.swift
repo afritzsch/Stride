@@ -8,7 +8,7 @@ import Observation
 final class ScheduleModel {
     var settings: ScheduleSettings {
         didSet {
-            UserDefaults.standard.set(try? JSONEncoder().encode(settings), forKey: Self.settingsKey)
+            UserDefaults.standard.setEncoded(settings, forKey: DefaultsKey.scheduleSettings)
             Task { await refresh() }
         }
     }
@@ -27,6 +27,8 @@ final class ScheduleModel {
     @ObservationIgnored let calendar = CalendarService()
     /// Source and location the live forecast was fetched for, to refetch when either changes.
     @ObservationIgnored private var forecastKey: String?
+    /// A refresh asked for while one was running (true: it wants the forecast refetched).
+    @ObservationIgnored private var queuedRefresh: Bool?
     @ObservationIgnored private var demoCache: (day: Date, busy: [BusyInterval], forecast: WeatherForecast)?
     @ObservationIgnored private var changeObserver: Task<Void, Never>?
 
@@ -38,8 +40,7 @@ final class ScheduleModel {
 
     init(model: AppModel) {
         self.model = model
-        settings = UserDefaults.standard.data(forKey: Self.settingsKey)
-            .flatMap { try? JSONDecoder().decode(ScheduleSettings.self, from: $0) } ?? ScheduleSettings()
+        settings = UserDefaults.standard.decoded(ScheduleSettings.self, forKey: DefaultsKey.scheduleSettings) ?? ScheduleSettings()
         changeObserver = Task { [weak self] in
             for await _ in NotificationCenter.default.notifications(named: CalendarService.changed) {
                 self?.reloadCalendar()
@@ -96,11 +97,23 @@ final class ScheduleModel {
 
     func refresh(forceWeather: Bool = false) async {
         calendarAccess = CalendarService.access
-        guard !isDemo, settings.suggestTimes, !isRefreshing else { return }
+        guard !isDemo, settings.suggestTimes else { return }
+        // A change while a refresh is running (new weather source or place) would otherwise be dropped and leave
+        // a stale forecast: queue one more pass, which the running refresh picks up when it's done.
+        if isRefreshing {
+            queuedRefresh = (queuedRefresh ?? false) || forceWeather
+            return
+        }
         isRefreshing = true
         defer { isRefreshing = false }
-        reloadCalendar()
-        await refreshWeather(force: forceWeather)
+        var force = forceWeather
+        repeat {
+            queuedRefresh = nil
+            reloadCalendar()
+            await refreshWeather(force: force)
+            force = queuedRefresh ?? false
+        } while queuedRefresh != nil && settings.suggestTimes
+        queuedRefresh = nil
     }
 
     /// Asks for calendar access and turns suggestions on if it's given.
@@ -207,6 +220,4 @@ final class ScheduleModel {
             model?.debugLog("Updating the calendar event failed: \(error)")
         }
     }
-
-    private static let settingsKey = "scheduleSettings"
 }

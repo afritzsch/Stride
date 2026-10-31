@@ -56,11 +56,11 @@ struct PlanView: View {
                 .task {
                     #if DEBUG
                     // -scrollTo adherence and -planSheet week | edit:<day> | time:<day> (see AppModel+Debug).
-                    if let target = UserDefaults.standard.string(forKey: "scrollTo") {
+                    if let target = UserDefaults.standard.string(forKey: DefaultsKey.scrollTo) {
                         try? await Task.sleep(for: .milliseconds(300))
                         proxy.scrollTo(target, anchor: .top)
                     }
-                    if let sheet = UserDefaults.standard.string(forKey: "planSheet") {
+                    if let sheet = UserDefaults.standard.string(forKey: DefaultsKey.planSheet) {
                         let parts = sheet.split(separator: ":").map(String.init)
                         let date = dates[min(max(Int(parts.last ?? "") ?? 0, 0), dates.count - 1)]
                         switch parts.first {
@@ -153,6 +153,7 @@ private struct PlanDayCard: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(day?.intensity.color ?? Color.secondary.opacity(0.3))
                         .frame(width: 6)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(PlanDayCard.title(for: date)).font(.caption.bold()).foregroundStyle(.secondary)
@@ -193,7 +194,7 @@ private struct PlanDayCard: View {
 }
 
 /// Session title, length, zone and details.
-private struct PlannedDayContent: View {
+struct PlannedDayContent: View {
     var day: PlannedDay
 
     var body: some View {
@@ -211,69 +212,6 @@ private struct PlannedDayContent: View {
         if !day.details.isEmpty {
             Text(day.details).font(.footnote).foregroundStyle(.secondary)
         }
-    }
-}
-
-/// The session's time: in the calendar already, the best free time with an add button, or why there's none.
-struct SessionTimeLine: View {
-    @Environment(AppModel.self) private var model
-    var schedule: DaySchedule
-    var onMore: () -> Void
-    @State private var error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
-                if let scheduled = schedule.scheduled {
-                    Label("In your calendar \(SlotFormat.range(scheduled.start, scheduled.end))", systemImage: "calendar.badge.checkmark")
-                        .foregroundStyle(.green)
-                    Spacer()
-                    Button("Change", action: onMore)
-                } else if let best = schedule.best {
-                    Image(systemName: best.weather?.systemImage ?? "clock")
-                        .symbolRenderingMode(.multicolor)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Best time: \(SlotFormat.range(best.start, best.end))").bold()
-                        Text(SlotFormat.detail(best)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                    Spacer()
-                    Button("Add", systemImage: "calendar.badge.plus") {
-                        do {
-                            try model.schedule.add(schedule.session, on: schedule.date, at: best.start)
-                            error = nil
-                        } catch {
-                            self.error = error.localizedDescription
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .labelStyle(.iconOnly)
-                    .accessibilityLabel("Add to calendar at \(SlotFormat.range(best.start, best.end))")
-                    Button("Other times", systemImage: "ellipsis.circle", action: onMore)
-                        .labelStyle(.iconOnly)
-                } else {
-                    Label(schedule.note ?? "No free time", systemImage: "calendar.badge.exclamationmark")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Pick a time", action: onMore)
-                }
-            }
-            if let error {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-        }
-        .font(.subheadline)
-    }
-}
-
-enum SlotFormat {
-    static func range(_ start: Date, _ end: Date) -> String {
-        "\(start.formatted(date: .omitted, time: .shortened))–\(end.formatted(date: .omitted, time: .shortened))"
-    }
-
-    /// "9 °C, dry · Your usual time · After sunset (16:50)".
-    static func detail(_ slot: SlotSuggestion) -> String {
-        ([slot.weather?.summary].compactMap(\.self) + slot.reasons + slot.warnings).joined(separator: " · ")
     }
 }
 
@@ -308,115 +246,6 @@ private struct WeatherAttributionView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-/// A saved analysis's plan, for past analyses.
-struct WeekPlanList: View {
-    var analysis: SavedAnalysis
-
-    private var totalMinutes: Int { analysis.report.weekPlan.map(\.durationMinutes).reduce(0, +) }
-    private var sessionCount: Int { analysis.report.weekPlan.filter { $0.intensity != .rest }.count }
-
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text("From \(analysis.planStartDate.formatted(date: .abbreviated, time: .omitted)): \(Format.hours(Double(totalMinutes) / 60)) over ^[\(sessionCount) session](inflect: true)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            ForEach(Array(analysis.report.weekPlan.enumerated()), id: \.offset) { _, day in
-                PlannedDayRow(day: day)
-            }
-        }
-    }
-}
-
-private struct PlannedDayRow: View {
-    var day: PlannedDay
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(day.intensity.color)
-                .frame(width: 6)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(day.day).font(.caption.bold()).foregroundStyle(.secondary)
-                    Spacer()
-                    StatusBadge(text: day.intensity.rawValue.capitalized, color: day.intensity.color)
-                }
-                PlannedDayContent(day: day)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
-    }
-}
-
-/// How the days of earlier plans went, newest first.
-private struct AdherenceList: View {
-    var days: [PlanAdherence.Day]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("How last week went").font(.headline)
-                Spacer()
-                Text(PlanAdherence.summary(of: days)).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.trailing)
-            }
-            ForEach(days.reversed()) { day in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: day.status.systemImage)
-                        .foregroundStyle(day.status.color)
-                        .frame(width: 20)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text(day.date.formatted(.dateTime.weekday().day().month())).font(.caption.bold()).foregroundStyle(.secondary)
-                            Spacer()
-                            Text(day.status.title).font(.caption).foregroundStyle(day.status.color)
-                        }
-                        Text(day.planned.isRest ? "Rest" : "\(day.planned.session), \(day.planned.durationMinutes) min").font(.subheadline)
-                        if !day.workouts.isEmpty {
-                            Text("Did: " + day.workouts.map(\.sportAndMinutes).joined(separator: ", "))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(day.notes, id: \.self) { note in
-                            Text(note.prefix(1).capitalized + note.dropFirst()).font(.footnote).foregroundStyle(.orange)
-                        }
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                if day.id != days.first?.id { Divider() }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardBackground()
-    }
-}
-
-extension PlanAdherence.Status {
-    var color: Color {
-        switch self {
-        case .done, .rested: .green
-        case .modified: .orange
-        case .missed: .red
-        case .extra: .purple
-        case .pending: .secondary
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .done: "checkmark.circle.fill"
-        case .rested: "moon.zzz.fill"
-        case .modified: "arrow.triangle.swap"
-        case .missed: "xmark.circle.fill"
-        case .extra: "plus.circle.fill"
-        case .pending: "clock"
         }
     }
 }

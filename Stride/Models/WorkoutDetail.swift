@@ -1,68 +1,5 @@
 import Foundation
 
-nonisolated struct TimedValue: Hashable, Sendable {
-    var date: Date
-    var value: Double
-}
-
-/// A HealthKit quantity sample reduced to plain values, so workout processing can run on HealthKit data,
-/// demo data, or an exported fixture alike.
-nonisolated struct RawSample: Codable, Hashable, Sendable {
-    var start: Date
-    var end: Date
-    var value: Double
-    var source: String
-}
-
-/// One GPS fix from a workout route.
-nonisolated struct RoutePoint: Codable, Hashable, Sendable {
-    var date: Date
-    var latitude: Double
-    var longitude: Double
-    var altitudeM: Double?
-    /// Horizontal accuracy radius in meters.
-    var accuracyM: Double?
-
-    /// Great-circle distance in meters.
-    func distance(to other: RoutePoint) -> Double {
-        let radians = Double.pi / 180
-        let dLat = (other.latitude - latitude) * radians, dLon = (other.longitude - longitude) * radians
-        let a = sin(dLat / 2) * sin(dLat / 2) + cos(latitude * radians) * cos(other.latitude * radians) * sin(dLon / 2) * sin(dLon / 2)
-        return 2 * 6_371_000 * asin(min(1, sqrt(a)))
-    }
-}
-
-/// Everything read from HealthKit for one workout, before any processing.
-nonisolated struct RawWorkoutData: Codable, Sendable {
-    var workoutID: UUID
-    var start: Date
-    var end: Date
-    var source: String
-    /// bpm, every source, overlapping the workout.
-    var heartRate: [RawSample]
-    /// Meters of walking/running distance, every source, overlapping the workout.
-    var distance: [RawSample]
-    var steps: [RawSample]
-    var elevationGainM: Double?
-    var temperatureC: Double?
-    var humidityPercent: Double?
-    var isIndoor: Bool?
-    var powerW: Double?
-    var cyclingCadence: Double?
-    var strideLengthM: Double?
-    var verticalOscillationCm: Double?
-    var groundContactMs: Double?
-    /// GPS fixes; nil in fixtures exported before routes were read.
-    var route: [RoutePoint]?
-}
-
-/// A full export of what the app reads, for replaying someone's real data in the Simulator.
-nonisolated struct HealthFixture: Codable, Sendable {
-    var exportedAt: Date
-    var snapshot: HealthSnapshot
-    var workouts: [RawWorkoutData]
-}
-
 nonisolated struct Split: Hashable, Identifiable, Sendable {
     /// 1-based kilometer number.
     var index: Int
@@ -111,10 +48,17 @@ nonisolated struct WorkoutDetail: Sendable {
     /// Step samples have to cover this share of the workout for cadence.
     static let minStepCoverage = 0.8
     static let plausibleRunCadence = 90.0...230.0
+    /// A GPS route needs this many fixes, at most this far apart (median), to stand in for distance samples.
+    static let minRoutePoints = 10
+    static let maxRouteGapSeconds = 15.0
+    /// Fewer distance samples than this can't make splits.
+    static let minDistanceSamples = 3
+    /// A final partial split shorter than this (meters) is dropped.
+    static let minPartialSplitM = 50.0
 
     /// Seconds in each of the five heart-rate zones.
     func zoneSeconds(zones: HeartRateZones) -> [Double] {
-        var seconds = Array(repeating: 0.0, count: 5)
+        var seconds = Array(repeating: 0.0, count: HeartRateZones.zoneCount)
         for (index, sample) in heartRate.enumerated() {
             let next = index + 1 < heartRate.count ? heartRate[index + 1].date : end
             // Cap gaps so a sparse series or a pause doesn't credit one reading with minutes of time.
@@ -158,33 +102,18 @@ nonisolated struct WorkoutDetail: Sendable {
         }
         return zip(sums, counts).map { $1 > 0 ? $0 / Double($1) : nil }
     }
+}
 
+// MARK: - Building from raw samples
+
+nonisolated extension WorkoutDetail {
     /// Turns raw samples into splits, cadence and zones, refusing to derive numbers from data that's too coarse.
     static func build(summary: WorkoutSummary, raw: RawWorkoutData) -> WorkoutDetail {
-        let window = DateInterval(start: raw.start, end: max(raw.end, raw.start))
+        let samples = SampleWindow(raw: raw)
         var notes: [String] = []
 
-        // Prefer the workout's own source (e.g. Garmin) so phone and watch data aren't mixed or double counted.
-        func preferred(_ samples: [RawSample]) -> [RawSample] {
-            let own = samples.filter { $0.source == raw.source }
-            return (own.isEmpty ? samples : own).sorted { $0.start < $1.start }
-        }
-        /// Cuts samples to the workout window, prorating values of samples that stick out.
-        func clipped(_ samples: [RawSample]) -> [RawSample] {
-            samples.compactMap { sample in
-                let length = sample.end.timeIntervalSince(sample.start)
-                guard length > 0 else { return window.contains(sample.start) ? sample : nil }
-                let start = max(sample.start, window.start), end = min(sample.end, window.end)
-                guard end > start else { return nil }
-                return RawSample(start: start, end: end, value: sample.value * end.timeIntervalSince(start) / length, source: sample.source)
-            }
-        }
-        func medianDuration(_ samples: [RawSample]) -> Double? {
-            MetricsReport.median(samples.map { $0.end.timeIntervalSince($0.start) })
-        }
-
-        let heartRate = preferred(raw.heartRate)
-            .filter { window.contains($0.start) }
+        let heartRate = samples.preferred(raw.heartRate)
+            .filter { samples.window.contains($0.start) }
             .map { TimedValue(date: $0.start, value: $0.value) }
         let heartRateInterval = medianGap(heartRate.map(\.date))
         if heartRate.isEmpty {
@@ -194,45 +123,14 @@ nonisolated struct WorkoutDetail: Sendable {
         }
 
         let route = (raw.route ?? [])
-            .filter { window.contains($0.date) && ($0.accuracyM ?? 0) <= Self.maxGPSAccuracyM }
+            .filter { samples.window.contains($0.date) && ($0.accuracyM ?? 0) <= Self.maxGPSAccuracyM }
             .sorted { $0.date < $1.date }
 
         var splits: [Split] = []
+        var cadence = raw.cyclingCadence
         if summary.isFootSport {
-            let ownDistance = preferred(raw.distance)
-            let distance = clipped(ownDistance)
-            let covered = distance.map(\.value).reduce(0, +)
-            let expected = (summary.distanceKm ?? 0) * 1000
-            let isGranular = (medianDuration(ownDistance) ?? .infinity) <= Self.maxSampleSeconds && distance.count >= 3
-            let isConsistent = expected <= 0 || abs(covered - expected) / expected <= Self.distanceTolerance
-            if isGranular && isConsistent {
-                splits = Self.splits(from: distance, heartRate: heartRate, workoutStart: raw.start)
-            } else if let gps = Self.distanceSamples(route: route, expectedMeters: expected) {
-                splits = Self.splits(from: gps, heartRate: heartRate, workoutStart: raw.start)
-                notes.append("Km splits are computed from the GPS route, so they can differ slightly from your watch's.")
-            } else if !ownDistance.isEmpty || expected > 0 {
-                notes.append(isGranular
-                    ? "Distance samples don't add up to the workout's distance, so km splits are hidden."
-                    : "Distance was only shared in coarse chunks, so km splits aren't available.")
-            }
-        }
-
-        var cadence: Double?
-        if summary.isFootSport {
-            // Own source only: summing phone and watch steps would double the cadence.
-            let ownSteps = raw.steps.filter { $0.source == raw.source }
-            let steps = clipped(ownSteps)
-            // Divide by the time the samples cover, not the elapsed time, so pauses don't lower cadence.
-            let coveredSeconds = steps.map { $0.end.timeIntervalSince($0.start) }.reduce(0, +)
-            if (medianDuration(ownSteps) ?? .infinity) <= Self.maxSampleSeconds,
-               coveredSeconds >= window.duration * Self.minStepCoverage, coveredSeconds > 0 {
-                let perMinute = steps.map(\.value).reduce(0, +) / (coveredSeconds / 60)
-                cadence = Self.plausibleRunCadence.contains(perMinute) ? perMinute : nil
-            } else if !raw.steps.isEmpty {
-                notes.append("Steps weren't shared in fine enough detail from this workout's device, so cadence isn't available.")
-            }
-        } else {
-            cadence = raw.cyclingCadence
+            splits = footSplits(summary: summary, raw: raw, samples: samples, heartRate: heartRate, route: route, notes: &notes)
+            cadence = footCadence(raw: raw, samples: samples, notes: &notes)
         }
 
         return WorkoutDetail(
@@ -255,6 +153,82 @@ nonisolated struct WorkoutDetail: Sendable {
         )
     }
 
+    /// Km splits from the watch's distance samples when they're fine and add up, else from the GPS route.
+    private static func footSplits(
+        summary: WorkoutSummary, raw: RawWorkoutData, samples: SampleWindow,
+        heartRate: [TimedValue], route: [RoutePoint], notes: inout [String]
+    ) -> [Split] {
+        let ownDistance = samples.preferred(raw.distance)
+        let distance = samples.clipped(ownDistance)
+        let covered = distance.map(\.value).reduce(0, +)
+        let expected = (summary.distanceKm ?? 0) * 1000
+        let isGranular = (SampleWindow.medianDuration(ownDistance) ?? .infinity) <= maxSampleSeconds && distance.count >= minDistanceSamples
+        let isConsistent = expected <= 0 || abs(covered - expected) / expected <= distanceTolerance
+        if isGranular && isConsistent {
+            return splits(from: distance, heartRate: heartRate, workoutStart: raw.start)
+        }
+        if let gps = distanceSamples(route: route, expectedMeters: expected) {
+            notes.append("Km splits are computed from the GPS route, so they can differ slightly from your watch's.")
+            return splits(from: gps, heartRate: heartRate, workoutStart: raw.start)
+        }
+        if !ownDistance.isEmpty || expected > 0 {
+            notes.append(isGranular
+                ? "Distance samples don't add up to the workout's distance, so km splits are hidden."
+                : "Distance was only shared in coarse chunks, so km splits aren't available.")
+        }
+        return []
+    }
+
+    /// Steps per minute from the workout's own device, or nil when the steps are too coarse or implausible.
+    private static func footCadence(raw: RawWorkoutData, samples: SampleWindow, notes: inout [String]) -> Double? {
+        // Own source only: summing phone and watch steps would double the cadence.
+        let ownSteps = raw.steps.filter { $0.source == raw.source }
+        let steps = samples.clipped(ownSteps)
+        // Divide by the time the samples cover, not the elapsed time, so pauses don't lower cadence.
+        let coveredSeconds = steps.map { $0.end.timeIntervalSince($0.start) }.reduce(0, +)
+        if (SampleWindow.medianDuration(ownSteps) ?? .infinity) <= maxSampleSeconds,
+           coveredSeconds >= samples.window.duration * minStepCoverage, coveredSeconds > 0 {
+            let perMinute = steps.map(\.value).reduce(0, +) / (coveredSeconds / 60)
+            return plausibleRunCadence.contains(perMinute) ? perMinute : nil
+        }
+        if !raw.steps.isEmpty {
+            notes.append("Steps weren't shared in fine enough detail from this workout's device, so cadence isn't available.")
+        }
+        return nil
+    }
+
+    /// The workout's time window and source, for picking and clipping the samples that belong to it.
+    private struct SampleWindow {
+        let window: DateInterval
+        let source: String
+
+        init(raw: RawWorkoutData) {
+            window = DateInterval(start: raw.start, end: max(raw.end, raw.start))
+            source = raw.source
+        }
+
+        /// Prefer the workout's own source (e.g. Garmin) so phone and watch data aren't mixed or double counted.
+        func preferred(_ samples: [RawSample]) -> [RawSample] {
+            let own = samples.filter { $0.source == source }
+            return (own.isEmpty ? samples : own).sorted { $0.start < $1.start }
+        }
+
+        /// Cuts samples to the workout window, prorating values of samples that stick out.
+        func clipped(_ samples: [RawSample]) -> [RawSample] {
+            samples.compactMap { sample in
+                let length = sample.end.timeIntervalSince(sample.start)
+                guard length > 0 else { return window.contains(sample.start) ? sample : nil }
+                let start = max(sample.start, window.start), end = min(sample.end, window.end)
+                guard end > start else { return nil }
+                return RawSample(start: start, end: end, value: sample.value * end.timeIntervalSince(start) / length, source: sample.source)
+            }
+        }
+
+        static func medianDuration(_ samples: [RawSample]) -> Double? {
+            MetricsReport.median(samples.map { $0.end.timeIntervalSince($0.start) })
+        }
+    }
+
     /// Median time between consecutive dates, in seconds.
     static func medianGap(_ dates: [Date]) -> Double? {
         MetricsReport.median(zip(dates.dropFirst(), dates).map { $0.timeIntervalSince($1) })
@@ -263,7 +237,7 @@ nonisolated struct WorkoutDetail: Sendable {
     /// Distance in meters between consecutive GPS fixes, scaled to the workout's distance. Nil when the
     /// route is too sparse or its length doesn't match the workout's within `distanceTolerance`.
     static func distanceSamples(route: [RoutePoint], expectedMeters: Double) -> [RawSample]? {
-        guard route.count >= 10, let gap = medianGap(route.map(\.date)), gap <= 15 else { return nil }
+        guard route.count >= minRoutePoints, let gap = medianGap(route.map(\.date)), gap <= maxRouteGapSeconds else { return nil }
         let samples = zip(route, route.dropFirst()).map {
             RawSample(start: $0.date, end: $1.date, value: $0.distance(to: $1), source: "GPS")
         }
@@ -311,47 +285,9 @@ nonisolated struct WorkoutDetail: Sendable {
         }
 
         let remainder = covered - (nextBoundary - 1000)
-        if remainder >= 50 {
+        if remainder >= minPartialSplitM {
             appendSplit(distance: remainder, until: lastEnd)
         }
         return splits
-    }
-}
-
-/// Which coach reviews a workout. Heart-rate zones and pace say how hard endurance work was; they say little
-/// about lifting, where heart rate stays low and the watch records no sets, reps or weights.
-nonisolated enum WorkoutKind: Sendable {
-    case endurance, strength
-}
-
-nonisolated extension WorkoutSummary {
-    var isFootSport: Bool { ["Running", "Walking", "Hiking"].contains(sport) }
-
-    static let strengthSports: Set<String> = ["Strength", "Core", "Climbing", "Pilates", "Yoga", "Mobility"]
-
-    var kind: WorkoutKind { Self.strengthSports.contains(sport) ? .strength : .endurance }
-
-    /// Average pace over moving time (HealthKit's workout duration excludes pauses).
-    var paceSecondsPerKm: Double? {
-        guard let km = distanceKm, km > 0 else { return nil }
-        return durationMinutes * 60 / km
-    }
-}
-
-nonisolated enum WorkoutFormat {
-    /// "5:12" for seconds per km.
-    static func pace(_ secondsPerKm: Double?) -> String {
-        guard let secondsPerKm, secondsPerKm.isFinite, secondsPerKm > 0 else { return "–" }
-        let total = Int(secondsPerKm.rounded())
-        return "\(total / 60):\(String(format: "%02d", total % 60))"
-    }
-
-    /// "47:12" or "1:47:12".
-    static func duration(_ seconds: Double) -> String {
-        let total = Int(seconds.rounded())
-        let hours = total / 3600, minutes = (total % 3600) / 60, secs = total % 60
-        return hours > 0
-            ? "\(hours):\(String(format: "%02d", minutes)):\(String(format: "%02d", secs))"
-            : "\(minutes):\(String(format: "%02d", secs))"
     }
 }

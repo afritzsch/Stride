@@ -2,6 +2,16 @@ import Foundation
 
 /// Plausible synthetic wearable data so the app can be tried in the Simulator or without a watch.
 nonisolated enum DemoData {
+    /// A planned session of the demo week; workouts start at `workoutHour`.
+    private struct Session {
+        var sport: String
+        var minutes: Double
+        var heartRate: Double
+        var kmPerMinute: Double
+    }
+
+    private static let workoutHour = 18
+
     static func snapshot(days: Int = HealthKitService.windowWeeks * 7, calendar: Calendar = .current) -> HealthSnapshot {
         var rng = SeededGenerator(seed: 42)
         // Separate stream so adding weight didn't change the rest of the demo data.
@@ -37,19 +47,17 @@ nonisolated enum DemoData {
                 sleep.append(night)
             }
 
-            // (sport, minutes, avg HR, km per minute)
-            let plan: (String, Double, Double, Double)? = switch weekday {
-            case 3: ("Running", 50, 162, 0.19)        // Tue intervals
-            case 5: ("Running", 45, 155, 0.18)        // Thu tempo
-            case 7: ("Running", ramp ? 110 : 85, 146, 0.165) // Sat long run
-            case 1: ("Cycling", 60, 128, 0.45)        // Sun easy ride
-            case 2: ("Strength", 40, 112, 0)          // Mon gym
-            case 4 where ramp: ("Running", 40, 150, 0.17)
+            let plan: Session? = switch weekday {
+            case 3: Session(sport: Sport.running, minutes: 50, heartRate: 162, kmPerMinute: 0.19)        // Tue intervals
+            case 5: Session(sport: Sport.running, minutes: 45, heartRate: 155, kmPerMinute: 0.18)        // Thu tempo
+            case 7: Session(sport: Sport.running, minutes: ramp ? 110 : 85, heartRate: 146, kmPerMinute: 0.165) // Sat long run
+            case 1: Session(sport: Sport.cycling, minutes: 60, heartRate: 128, kmPerMinute: 0.45)        // Sun easy ride
+            case 2: Session(sport: Sport.strength, minutes: 40, heartRate: 112, kmPerMinute: 0)          // Mon gym
+            case 4 where ramp: Session(sport: Sport.running, minutes: 40, heartRate: 150, kmPerMinute: 0.17)
             default: nil
             }
-            if let (sport, minutes, heartRate, kmPerMinute) = plan, offset > 0,
-               let start = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: day) {
-                workouts.append(workout(start: start, sport: sport, minutes: minutes, heartRate: heartRate, kmPerMinute: kmPerMinute, rng: &rng))
+            if let plan, offset > 0, let start = calendar.date(bySettingHour: workoutHour, minute: 0, second: 0, of: day) {
+                workouts.append(workout(plan, start: start, rng: &rng))
             }
         }
 
@@ -97,20 +105,21 @@ nonisolated extension DemoData {
 
             guard !isBreak else { continue }
             let pace = 0.15 + 0.03 * fitness // km per minute
-            // (sport, minutes, avg HR, km per minute); more sessions as fitness grows.
-            let plan: (String, Double, Double, Double)? = switch weekday {
-            case 3: ("Running", 35 + 15 * fitness, 158, pace + 0.01)
-            case 5 where fitness > 0.3: ("Running", 40, 152, pace)
-            case 7 where (148..<155).contains(daysLeft): ("Running", 21.2 / (pace + 0.005), 165, pace + 0.005) // half marathon race
-            case 7: ("Running", 50 + 35 * fitness, 145, pace - 0.01)
-            case 1 where fitness > 0.15: ("Cycling", 45 + 15 * fitness, 126, 0.42)
-            case 2 where fitness > 0.5: ("Strength", 35, 110, 0)
+            // More sessions as fitness grows.
+            let plan: Session? = switch weekday {
+            case 3: Session(sport: Sport.running, minutes: 35 + 15 * fitness, heartRate: 158, kmPerMinute: pace + 0.01)
+            case 5 where fitness > 0.3: Session(sport: Sport.running, minutes: 40, heartRate: 152, kmPerMinute: pace)
+            case 7 where (148..<155).contains(daysLeft): // half marathon race
+                Session(sport: Sport.running, minutes: 21.2 / (pace + 0.005), heartRate: 165, kmPerMinute: pace + 0.005)
+            case 7: Session(sport: Sport.running, minutes: 50 + 35 * fitness, heartRate: 145, kmPerMinute: pace - 0.01)
+            case 1 where fitness > 0.15: Session(sport: Sport.cycling, minutes: 45 + 15 * fitness, heartRate: 126, kmPerMinute: 0.42)
+            case 2 where fitness > 0.5: Session(sport: Sport.strength, minutes: 35, heartRate: 110, kmPerMinute: 0)
             default: nil
             }
             // Skip about one session in eight, like real life.
-            guard let (sport, minutes, heartRate, kmPerMinute) = plan, Double.random(in: 0...1, using: &rng) > 0.12,
-                  let workoutStart = calendar.date(bySettingHour: 18, minute: 0, second: 0, of: day) else { continue }
-            workouts.append(workout(start: workoutStart, sport: sport, minutes: minutes, heartRate: heartRate, kmPerMinute: kmPerMinute, rng: &rng))
+            guard let plan, Double.random(in: 0...1, using: &rng) > 0.12,
+                  let workoutStart = calendar.date(bySettingHour: workoutHour, minute: 0, second: 0, of: day) else { continue }
+            workouts.append(workout(plan, start: workoutStart, rng: &rng))
         }
         return HealthSnapshot(fetchedAt: start, days: dailyMetrics, sleep: sleep, workouts: workouts, isDemo: true)
     }
@@ -131,20 +140,18 @@ nonisolated extension DemoData {
     }
 
     /// A workout of about `minutes` (randomized like the heart rate) at a steady speed.
-    private static func workout(
-        start: Date, sport: String, minutes: Double, heartRate: Double, kmPerMinute: Double, rng: inout SeededGenerator
-    ) -> WorkoutSummary {
-        let duration = minutes + Double.random(in: -5...8, using: &rng)
+    private static func workout(_ session: Session, start: Date, rng: inout SeededGenerator) -> WorkoutSummary {
+        let duration = session.minutes + Double.random(in: -5...8, using: &rng)
         return WorkoutSummary(
             // Derived from the start so saved coach reviews still match after a relaunch.
             id: UUID(uuidString: String(format: "00000000-0000-4000-8000-%012llx", UInt64(start.timeIntervalSince1970)))!,
             start: start,
             durationMinutes: duration,
-            sport: sport,
-            distanceKm: kmPerMinute > 0 ? duration * kmPerMinute : nil,
+            sport: session.sport,
+            distanceKm: session.kmPerMinute > 0 ? duration * session.kmPerMinute : nil,
             activeEnergyKcal: duration * 11,
-            averageHeartRate: heartRate + Double.random(in: -4...4, using: &rng),
-            maxHeartRate: heartRate + 18,
+            averageHeartRate: session.heartRate + Double.random(in: -4...4, using: &rng),
+            maxHeartRate: session.heartRate + 18,
             sourceName: "Demo"
         )
     }
@@ -197,8 +204,8 @@ nonisolated extension DemoData {
             distance = distance.map { RawSample(start: $0.start, end: $0.end, value: $0.value * scale, source: $0.source) }
         }
 
-        let isRun = workout.sport == "Running"
-        let hasRoute = workout.isFootSport || workout.sport == "Cycling"
+        let isRun = workout.sport == Sport.running
+        let hasRoute = workout.isFootSport || workout.sport == Sport.cycling
         return RawWorkoutData(
             workoutID: workout.id,
             start: workout.start,
@@ -210,9 +217,9 @@ nonisolated extension DemoData {
             elevationGainM: workout.isFootSport ? Double.random(in: 25...140, using: &rng).rounded() : nil,
             temperatureC: 11,
             humidityPercent: 72,
-            isIndoor: workout.sport == "Strength",
+            isIndoor: workout.sport == Sport.strength,
             powerW: isRun ? Double.random(in: 240...290, using: &rng) : nil,
-            cyclingCadence: workout.sport == "Cycling" ? 86 : nil,
+            cyclingCadence: workout.sport == Sport.cycling ? 86 : nil,
             route: hasRoute ? route(for: workout, distance: distance, rng: &rng) : []
         )
     }

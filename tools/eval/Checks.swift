@@ -14,6 +14,7 @@ func runOfflineChecks() async {
     checkForecastParsing()
     await checkAthletePlan()
     checkStrength()
+    checkProgress()
 }
 
 /// Analyses saved by earlier versions (with an `engine`, before `modelName`, `sport` and `targetZone`) still load.
@@ -90,20 +91,21 @@ func checkPlanAdherence() {
         (scenario.calendar.dateComponents([.day], from: scenario.today, to: $0.date).day!, $0)
     })
     check(adherence.days.count == 7, "7 planned days covered, got \(adherence.days.count)")
-    // Demo weekdays: Tue intervals, Wed (ramp) run, Thu tempo, Sat long run, Sun ride, Mon gym; nothing today.
+    // The plan starts six days ago, so which weekday gets which session depends on today: check rules that
+    // hold on any day. Demo weekdays: Tue intervals, Wed (ramp) run, Thu tempo, Sat long run, Sun ride, Mon gym.
     let weekday = { (offset: Int) in scenario.calendar.component(.weekday, from: scenario.day(offset)) }
     for (offset, day) in byOffset {
-        switch (weekday(offset), day.planned.sport) {
-        case (_, _) where offset == 0:
-            check(day.status == .pending, "today is pending")
-        case (6, _): // Friday: no demo workout
-            check(day.status == .missed, "Friday's run missed, got \(day.status)")
-        case (_, PlannedDay.rest) where !day.workouts.isEmpty:
-            check(day.status == .extra, "workout on a rest day is extra")
-        case (5, _): // Thursday tempo (~155 bpm) planned as easy Z2
+        let label = PromptBuilder.dayLabel(day.date, calendar: scenario.calendar)
+        let isRest = day.planned.sport == PlannedDay.rest
+        if offset == 0 {
+            check(day.status == .pending, "today is pending, got \(day.status)")
+        } else if isRest {
+            check(day.status == (day.workouts.isEmpty ? .rested : .extra), "\(label) rest day: got \(day.status)")
+        } else if day.workouts.isEmpty {
+            check(day.status == .missed, "\(label) planned \(day.planned.session) without a workout is missed, got \(day.status)")
+        } else if weekday(offset) == 5, day.planned.intensity == .easy, day.workouts.contains(where: { $0.sport == day.planned.sport }) {
+            // Thursday tempo (~155 bpm) on a day planned easy in Z2.
             check(day.notes.contains { $0.hasPrefix("harder") }, "tempo on an easy day flagged harder: \(day.notes)")
-        default:
-            break
         }
     }
     check(PlanAdherence.summary(of: adherence.completed).contains("planned sessions done"), "summary line")

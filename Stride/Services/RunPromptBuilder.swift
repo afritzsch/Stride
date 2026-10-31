@@ -78,18 +78,26 @@ nonisolated struct RunPromptBuilder {
         """
 
     var prompt: String {
-        let workout = detail.summary
-        let maxHR = profile.effectiveMaxHeartRate
-        let num = PromptBuilder.num
-        var lines: [String] = []
+        (athleteLines + sessionLines + seriesLines + contextLines + previousSessionLines).joined(separator: "\n")
+    }
 
+    private var athleteLines: [String] {
+        let maxHR = profile.effectiveMaxHeartRate
+        var lines: [String] = []
         lines.append("ATHLETE: \(profile.primarySport), \(profile.experience.rawValue); max HR \(Int(maxHR)) bpm\(profile.isMaxHeartRateEstimated ? " (estimated)" : "")")
         lines.append("HR ZONES: \(metrics.heartRateZones.summary)")
         if profile.hasGoal {
-            let target = profile.goalTarget.isEmpty ? "" : ", target \(profile.goalTarget)"
-            lines.append("GOAL: \(profile.goalName.isEmpty ? "event" : profile.goalName) on \(label(profile.goalDate))\(target)")
+            lines.append("GOAL: \(PromptBuilder.goalSummary(profile, calendar: calendar))")
         }
         if !profile.notes.isEmpty { lines.append("ATHLETE NOTES: \(profile.notes)") }
+        return lines
+    }
+
+    /// What the watch recorded: totals, zones, effort, data limitations and the logged lifting.
+    private var sessionLines: [String] {
+        let workout = detail.summary
+        let num = PromptBuilder.num
+        var lines: [String] = []
 
         lines.append("")
         lines.append("SESSION: \(workout.sport) on \(label(workout.start)) at \(workout.start.formatted(date: .omitted, time: .shortened))")
@@ -140,6 +148,14 @@ nonisolated struct RunPromptBuilder {
             lines.append(contentsOf: StrengthLog.promptLines(for: strengthSession, history: strengthHistory, compact: compact))
         }
 
+        return lines
+    }
+
+    /// Splits and heart rate over time, then what was planned and what the athlete said.
+    private var seriesLines: [String] {
+        let workout = detail.summary
+        let num = PromptBuilder.num
+        var lines: [String] = []
         if !detail.splits.isEmpty {
             lines.append("")
             lines.append("SPLITS (km | pace /km | avg HR)")
@@ -169,6 +185,14 @@ nonisolated struct RunPromptBuilder {
             lines.append("ATHLETE'S NOTE ON THIS SESSION: \(trimmedNote)")
         }
 
+        return lines
+    }
+
+    /// Sleep, resting HR, HRV and load around the session.
+    private var contextLines: [String] {
+        let workout = detail.summary
+        let num = PromptBuilder.num
+        var lines: [String] = []
         lines.append("")
         lines.append("CONTEXT")
         let day = calendar.startOfDay(for: workout.start)
@@ -195,6 +219,14 @@ nonisolated struct RunPromptBuilder {
         let acute = loadBefore(days: 7), chronic = loadBefore(days: 28) / 4
         lines.append("- Load in the 7 days before: \(num(acute, 0)); 4-week weekly avg before: \(num(chronic, 0)); ACWR: \(num(chronic > 0 ? acute / chronic : nil, 2))")
 
+        return lines
+    }
+
+    /// Earlier sessions of the same sport to compare with.
+    private var previousSessionLines: [String] {
+        let workout = detail.summary
+        let num = PromptBuilder.num
+        var lines: [String] = []
         let previous = snapshot.workouts
             .filter { $0.sport == workout.sport && $0.start < workout.start }
             .suffix(compact ? 3 : 6)
@@ -220,7 +252,7 @@ nonisolated struct RunPromptBuilder {
             }
         }
 
-        return lines.joined(separator: "\n")
+        return lines
     }
 
     private func label(_ date: Date) -> String {

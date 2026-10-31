@@ -70,7 +70,7 @@ struct PlanDayEditor: View {
     init(date: Date, initial: PlannedDay?) {
         self.date = date
         _draft = State(initialValue: initial ?? PlannedDay(
-            day: PromptBuilder.dayLabel(date, calendar: .current), sport: "Running", intensity: .easy, session: "",
+            day: PromptBuilder.dayLabel(date, calendar: .current), sport: Sport.running, intensity: .easy, session: "",
             durationMinutes: 45, targetZone: 2, details: ""
         ))
     }
@@ -220,6 +220,6 @@ struct WeekPlanEditor: View {
 extension AppModel {
     /// The athlete's primary sport when it's one the plan knows, otherwise running.
     var defaultPlanSport: String {
-        PlannedDay.sports.first { $0.caseInsensitiveCompare(profile.primarySport) == .orderedSame && $0 != PlannedDay.rest } ?? "Running"
+        PlannedDay.sports.first { $0.caseInsensitiveCompare(profile.primarySport) == .orderedSame && $0 != PlannedDay.rest } ?? Sport.running
     }
 }

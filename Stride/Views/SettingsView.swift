@@ -3,9 +3,6 @@ import UIKit
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var exportURL: URL?
-    @State private var isExporting = false
-    @State private var exportError: String?
 
     var body: some View {
         @Bindable var model = model
@@ -96,46 +93,60 @@ struct SettingsView: View {
                     Text("Notes for the coach")
                 }
 
-                Section {
-                    Toggle("Use demo data", isOn: $model.useDemoData)
-                    if !model.useDemoData {
-                        Button("Connect Apple Health") {
-                            Task { await model.connectHealth() }
-                        }
-                    }
-                    Button {
-                        Task {
-                            isExporting = true
-                            defer { isExporting = false }
-                            do {
-                                exportURL = try await model.exportHealthData()
-                                exportError = nil
-                            } catch {
-                                exportError = error.localizedDescription
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Text("Export data for debugging")
-                            if isExporting { Spacer(); ProgressView() }
-                        }
-                    }
-                    .disabled(isExporting)
-                    if let exportURL {
-                        ShareLink(item: exportURL) {
-                            Label("Share export file", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    if let exportError {
-                        Text(exportError).font(.footnote).foregroundStyle(.red)
-                    }
-                } header: {
-                    Text("Data")
-                } footer: {
-                    Text("The debug export contains your raw health data for the last \(HealthKitService.windowWeeks) weeks. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
-                }
+                DataSection()
             }
             .navigationTitle("Settings")
+        }
+    }
+}
+
+/// Demo data, Apple Health access and the debug export.
+private struct DataSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var exportURL: URL?
+    @State private var isExporting = false
+    @State private var exportError: String?
+
+    var body: some View {
+        @Bindable var model = model
+
+        Section {
+            Toggle("Use demo data", isOn: $model.useDemoData)
+            if !model.useDemoData {
+                Button("Connect Apple Health") {
+                    Task { await model.connectHealth() }
+                }
+            }
+            Button {
+                Task {
+                    isExporting = true
+                    defer { isExporting = false }
+                    do {
+                        exportURL = try await model.exportHealthData()
+                        exportError = nil
+                    } catch {
+                        exportError = error.localizedDescription
+                    }
+                }
+            } label: {
+                HStack {
+                    Text("Export data for debugging")
+                    if isExporting { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(isExporting)
+            if let exportURL {
+                ShareLink(item: exportURL) {
+                    Label("Share export file", systemImage: "square.and.arrow.up")
+                }
+            }
+            if let exportError {
+                Text(exportError).font(.footnote).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Data")
+        } footer: {
+            Text("The debug export contains your raw health data for the last \(HealthKitService.windowWeeks) weeks. Only share it with someone you trust. Stride reads everything from Apple Health, so it works with any watch or app that syncs there (Apple Watch, Garmin, and others). Brand-specific scores such as Garmin Body Battery or Training Readiness aren't shared with Apple Health, so the coach estimates recovery from resting HR, HRV, and sleep instead.")
         }
     }
 }

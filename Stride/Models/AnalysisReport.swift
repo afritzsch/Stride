@@ -47,6 +47,16 @@ nonisolated enum Priority: String, Codable, CaseIterable, Sendable {
 @Generable
 nonisolated enum SessionIntensity: String, Codable, CaseIterable, Sendable {
     case rest, easy, moderate, hard
+
+    /// Ascending effort, for comparing two sessions.
+    var rank: Int {
+        switch self {
+        case .rest: 0
+        case .easy: 1
+        case .moderate: 2
+        case .hard: 3
+        }
+    }
 }
 
 @Generable
@@ -88,11 +98,14 @@ nonisolated struct PlannedDay: Codable, Hashable, Sendable {
     /// Names match `WorkoutSummary.sport` (HealthKit activity names), so plan and workouts can be compared.
     static let rest = "Rest"
     static let sports = [
-        "Running", "Cycling", "Swimming", "Walking", "Hiking", "Strength", "Mobility", "Yoga", "Rowing", "HIIT",
-        "Cross training", "Other", rest,
+        Sport.running, Sport.cycling, Sport.swimming, Sport.walking, Sport.hiking, Sport.strength, "Mobility", "Yoga", "Rowing", "HIIT",
+        "Cross training", Sport.other, rest,
     ]
 
     var isRest: Bool { intensity == .rest }
+
+    /// A real sport, as opposed to a rest day, "Other", or the empty sport of plans saved before `sport` existed.
+    var hasKnownSport: Bool { !sport.isEmpty && sport != Sport.other && sport != Self.rest }
 }
 
 nonisolated extension PlannedDay {
@@ -105,10 +118,10 @@ nonisolated extension PlannedDay {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         day = try container.decode(String.self, forKey: .day)
         intensity = try container.decode(SessionIntensity.self, forKey: .intensity)
-        sport = try container.decodeIfPresent(String.self, forKey: .sport) ?? (intensity == .rest ? Self.rest : "")
+        sport = try container.decode(.sport, default: intensity == .rest ? Self.rest : "")
         session = try container.decode(String.self, forKey: .session)
         durationMinutes = try container.decode(Int.self, forKey: .durationMinutes)
-        targetZone = try container.decodeIfPresent(Int.self, forKey: .targetZone) ?? 0
+        targetZone = try container.decode(.targetZone, default: 0)
         details = try container.decode(String.self, forKey: .details)
     }
 }

@@ -32,25 +32,21 @@ nonisolated enum WeatherClient {
     /// `place.name` is empty for the current location.
     static func forecast(source: WeatherSource, place: WeatherPlace, days: Int = 8) async throws -> WeatherForecast? {
         let name = place.name.isEmpty ? nil : place.name
-        switch source {
-        case .off:
-            return nil
-        case .apple where isAppleWeatherInBuild:
-            #if WEATHERKIT
+        if source == .off { return nil }
+        #if WEATHERKIT
+        if source == .apple {
             return try await appleForecast(location: CLLocation(latitude: place.latitude, longitude: place.longitude), placeName: name, days: days)
-            #else
-            return nil
-            #endif
-        case .openMeteo, .apple:
-            // A build without WeatherKit falls back to Open-Meteo for a setting saved by one with it.
-            return try await OpenMeteo.fetch(latitude: place.latitude, longitude: place.longitude, placeName: name, days: days)
         }
+        #endif
+        // A build without WeatherKit falls back to Open-Meteo for a setting saved by one with it.
+        return try await OpenMeteo.fetch(latitude: place.latitude, longitude: place.longitude, placeName: name, days: days)
     }
 
     #if WEATHERKIT
     private static func appleForecast(location: CLLocation, placeName: String?, days: Int) async throws -> WeatherForecast {
-        let start = Calendar.current.startOfDay(for: .now)
-        let end = Calendar.current.date(byAdding: .day, value: days, to: start) ?? start
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: .now)
+        let end = calendar.date(byAdding: .day, value: days, to: start) ?? start
         let (hourly, daily) = try await WeatherService.shared.weather(
             for: location,
             including: .hourly(startDate: start, endDate: end), .daily(startDate: start, endDate: end)
@@ -69,7 +65,7 @@ nonisolated enum WeatherClient {
         }
         let sun = daily.forecast.compactMap { day -> SunTimes? in
             guard let sunrise = day.sun.sunrise, let sunset = day.sun.sunset else { return nil }
-            return SunTimes(date: Calendar.current.startOfDay(for: day.date), sunrise: sunrise, sunset: sunset)
+            return SunTimes(date: calendar.startOfDay(for: day.date), sunrise: sunrise, sunset: sunset)
         }
         return WeatherForecast(fetchedAt: .now, source: .apple, placeName: placeName, hours: hours, sun: sun)
     }

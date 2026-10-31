@@ -38,7 +38,9 @@ nonisolated struct TrainingIndicators: Sendable {
     /// Foster monotony (mean / SD of daily load, last 7 days). > 2 means little day-to-day variation.
     var monotony: Double?
     var consecutiveTrainingDays = 0
-    var restingHRBaseline = 60.0
+    /// Resting HR assumed when there are no readings to take a baseline from.
+    static let defaultRestingHR = 60.0
+    var restingHRBaseline = defaultRestingHR
 
     var sleep7: Double?
     var sleep28: Double?
@@ -79,7 +81,7 @@ nonisolated struct MetricsReport: Sendable {
         let days7 = snapshot.days.filter { $0.date >= start7 }
         let days28 = snapshot.days.filter { $0.date >= start28 }
         var ind = TrainingIndicators()
-        ind.restingHRBaseline = Self.median(days28.compactMap(\.restingHeartRate)) ?? 60
+        ind.restingHRBaseline = Self.median(days28.compactMap(\.restingHeartRate)) ?? TrainingIndicators.defaultRestingHR
         let zones = profile.heartRateZones(restingHR: ind.restingHRBaseline)
 
         var workoutLoad: [UUID: Double] = [:]
@@ -105,9 +107,11 @@ nonisolated struct MetricsReport: Sendable {
         acwrHistory = snapshot.days.compactMap { day in
             guard let firstSynced, let chronicStart = calendar.date(byAdding: .day, value: -27, to: day.date),
                   firstSynced <= chronicStart else { return nil }
-            let chronic = loads(endingOn: day.date, days: 28).reduce(0, +) / 4
+            // Newest day first, so the first 7 entries are the acute week.
+            let last28 = loads(endingOn: day.date, days: 28)
+            let chronic = last28.reduce(0, +) / 4
             guard chronic > 0 else { return nil }
-            return DatedValue(date: day.date, value: loads(endingOn: day.date, days: 7).reduce(0, +) / chronic)
+            return DatedValue(date: day.date, value: last28.prefix(7).reduce(0, +) / chronic)
         }
         if let sd = Self.standardDeviation(last7Loads), sd > 0 {
             ind.monotony = (ind.acuteLoad / 7) / sd
@@ -151,13 +155,19 @@ nonisolated struct MetricsReport: Sendable {
 
     // MARK: - Formulas
 
+    /// Banister's TRIMP weights for men: `minutes × reserve × 0.64 × e^(1.92 × reserve)`.
+    private static let trimpScale = 0.64
+    private static let trimpExponent = 1.92
+    /// TRIMP per minute for a workout without heart rate: roughly moderate effort.
+    private static let trimpPerMinuteWithoutHR = 0.7
+
     static func trimp(_ workout: WorkoutSummary, restingHR: Double, maxHR: Double) -> Double {
         guard let avg = workout.averageHeartRate, maxHR > restingHR else {
-            // No heart rate (e.g. strength without a strap): assume roughly moderate effort.
-            return workout.durationMinutes * 0.7
+            // No heart rate (e.g. strength without a strap).
+            return workout.durationMinutes * trimpPerMinuteWithoutHR
         }
         let reserve = min(max((avg - restingHR) / (maxHR - restingHR), 0), 1)
-        return workout.durationMinutes * reserve * 0.64 * exp(1.92 * reserve)
+        return workout.durationMinutes * reserve * trimpScale * exp(trimpExponent * reserve)
     }
 
     /// Easy = average HR in Z1–2, moderate = Z3, hard = Z4–5.
@@ -177,10 +187,8 @@ nonisolated struct MetricsReport: Sendable {
         calendar: Calendar
     ) -> [WeeklySummary] {
         // ISO weeks (Monday start) in the caller's time zone.
-        var iso = calendar
-        iso.firstWeekday = 2
-        iso.minimumDaysInFirstWeek = 4
-        func weekStart(_ date: Date) -> Date { iso.dateInterval(of: .weekOfYear, for: date)?.start ?? date }
+        let iso = calendar.iso
+        func weekStart(_ date: Date) -> Date { iso.startOfWeek(for: date) }
 
         let daysByWeek = Dictionary(grouping: snapshot.days) { weekStart($0.date) }
         var weeks = Dictionary(uniqueKeysWithValues: daysByWeek.keys.map { ($0, WeeklySummary(weekStart: $0)) })
@@ -230,6 +238,7 @@ nonisolated struct MetricsReport: Sendable {
     static func minutesAfterSixPM(_ date: Date, calendar: Calendar) -> Double {
         let parts = calendar.dateComponents([.hour, .minute], from: date)
         let minutes = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
-        return Double((minutes - 18 * 60 + 24 * 60) % (24 * 60))
+        let dayMinutes = 24 * 60
+        return Double((minutes - 18 * 60 + dayMinutes) % dayMinutes)
     }
 }
