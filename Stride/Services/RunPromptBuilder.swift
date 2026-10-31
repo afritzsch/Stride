@@ -9,6 +9,10 @@ nonisolated struct RunPromptBuilder {
     var plannedSession: PlannedDay?
     var note: String
     var compact: Bool
+    /// The session from the athlete's lifting log (Hevy) recorded at the same time, and earlier logged sessions
+    /// to compare exercises with.
+    var strengthSession: StrengthSession? = nil
+    var strengthHistory: [StrengthSession] = []
     var calendar = Calendar.current
 
     static func instructions(for kind: WorkoutKind) -> String {
@@ -43,7 +47,10 @@ nonisolated struct RunPromptBuilder {
         your athlete (an endurance athlete) just completed, using data from their watch (synced through Apple Health).
 
         Rules:
-        - The watch records only time and heart rate for this kind of session: no exercises, sets, reps or \
+        - If there is a LOGGED EXERCISES section, it comes from the athlete's lifting log: judge the lifting from \
+        it (exercises, sets, reps, weights, RPE, estimated 1RM and the change from last time) and cite those \
+        numbers. Personal bests are marked; never claim others.
+        - Without that section, the watch recorded only time and heart rate: no exercises, sets, reps or \
         weights. Don't invent them, and don't judge the lifting itself unless the athlete's note describes it.
         - Heart rate rises during sets and drops during rest, and stays far below running heart rate. Low heart \
         rate doesn't make it an easy, light or recovery session: use it only to describe the work and rest \
@@ -126,6 +133,11 @@ nonisolated struct RunPromptBuilder {
             lines.append("")
             lines.append("DATA LIMITATIONS (how the watch recorded it, not advice material)")
             lines.append(contentsOf: detail.dataNotes.map { "- \($0)" })
+        }
+
+        if workout.kind == .strength, let strengthSession {
+            lines.append("")
+            lines.append(contentsOf: StrengthLog.promptLines(for: strengthSession, history: strengthHistory, compact: compact))
         }
 
         if !detail.splits.isEmpty {

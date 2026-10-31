@@ -58,6 +58,8 @@ struct SettingsView: View {
 
                 ScheduleSettingsSection()
 
+                HevySettingsSection()
+
                 Section("Goal") {
                     Toggle("Training for an event", isOn: $model.profile.hasGoal)
                     if model.profile.hasGoal {

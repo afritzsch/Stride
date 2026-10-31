@@ -65,3 +65,7 @@ nonisolated struct HealthSnapshot: Codable, Sendable {
         return merged
     }
 }
+
+nonisolated extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}

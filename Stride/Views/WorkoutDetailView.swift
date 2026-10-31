@@ -21,6 +21,9 @@ struct WorkoutDetailView: View {
                 VStack(spacing: 16) {
                     header
                     StatGrid(workout: workout, detail: detail, load: model.metrics?.workoutLoad[workout.id])
+                    if workout.kind == .strength {
+                        StrengthWorkoutSection(workout: workout)
+                    }
                     if let detail {
                         if !detail.dataNotes.isEmpty {
                             Card {
@@ -65,6 +68,7 @@ struct WorkoutDetailView: View {
                 if model.runAnalyses[workout.id] == nil {
                     AppleAnalyzer.prewarm(instructions: RunPromptBuilder.instructions(for: workout.kind))
                 }
+                if workout.kind == .strength { await model.strength.sync() }
                 await load()
                 let hooks = model.consumeLaunchHooks()
                 if let target = hooks.scrollTarget {

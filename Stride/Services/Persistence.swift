@@ -19,6 +19,7 @@ nonisolated enum JSONStore {
     static let runAnalyses = "run-analyses.json"
     static let archive = "history-archive.json"
     static let athletePlan = "athlete-plan.json"
+    static let hevyWorkouts = "hevy-workouts.json"
 
     /// nil when the file is missing or unreadable. A file that no longer decodes (e.g. after a model change)
     /// is moved aside first, so the next save doesn't overwrite the user's history.
@@ -33,6 +34,10 @@ nonisolated enum JSONStore {
             try? FileManager.default.moveItem(at: url, to: backup)
             return nil
         }
+    }
+
+    static func delete(_ file: String) {
+        try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appending(path: file))
     }
 
     static func save(_ value: some Encodable, to file: String) {

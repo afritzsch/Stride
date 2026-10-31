@@ -18,13 +18,15 @@ extension HealthFixture {
 
 /// Hooks for driving the app from the Simulator (see tools/stride-mcp). Debug builds only read these
 /// launch arguments:
-///   -route dashboard | coach | chat | plan | settings | workouts | workout:<latest | latest-run | index | uuid>
+///   -route dashboard | coach | chat | plan | settings | workouts | strength
+///          | workout:<latest | latest-run | latest-strength | index | uuid>
 ///          | progress | skill:<endurance | power | strength | explorer | vitality | rest | discipline>
 ///          | metric:<load | acwr | sleep | restingHR | hrv | steps | weight>
 ///   -scrollTo <section>   scroll the first opened workout to route, heart-rate, zones, splits, review, or analysis;
 ///                         on the progress route: trend, compare, records, or achievements; on the plan route: adherence
 ///   -planSheet <sheet>    on the plan route, open week (the week editor), edit:<n> or time:<n> for the day n days from today
 ///   -analyze YES          review the first opened workout
+///   -demoHevy NO          demo data without its made-up Hevy log, to see the strength screens from watch data only
 ///   -fixture <path>       replay an exported HealthFixture (default: Documents/fixture.json)
 ///   -exportFixture YES    write what the app reads to Documents/export.json
 ///   -probeModel YES       ask the on-device model for one word whatever `availability` says; writes Documents/model-probe.json
@@ -71,6 +73,9 @@ extension AppModel {
         case "workouts":
             selectedTab = .dashboard
             dashboardPath = [.allWorkouts]
+        case "strength":
+            selectedTab = .dashboard
+            dashboardPath = [.strength]
         case "workout":
             selectedTab = .dashboard
             if let workout = workout(matching: parts.count > 1 ? parts[1] : "latest") {
@@ -107,6 +112,7 @@ extension AppModel {
         switch selector {
         case "latest": return newestFirst.first
         case "latest-run": return newestFirst.first { $0.sport == "Running" }
+        case "latest-strength": return newestFirst.first { $0.kind == .strength }
         default:
             if let index = Int(selector), newestFirst.indices.contains(index) { return newestFirst[index] }
             return newestFirst.first { $0.id.uuidString.caseInsensitiveCompare(selector) == .orderedSame }
@@ -164,6 +170,20 @@ extension AppModel {
 
         if !athleteDays.isEmpty {
             state["athleteDays"] = athleteDays.map { PromptBuilder.dayLabel($0.date, calendar: .current) + ": " + $0.day.briefDescription }
+        }
+        if let report = strength.report {
+            state["strength"] = [
+                "source": "\(strength.source)",
+                "loggedSessions": strength.sessions?.count ?? NSNull(),
+                "syncError": strength.syncError ?? NSNull(),
+                "sessionsPerWeek": round(report.sessionsPerWeek, 2),
+                "minutesPerWeek": round(report.minutesPerWeek, 0),
+                "volumeLast28Days": round(report.volumeLast28Days, 0),
+                "weeks": report.weeks.map { "\(PromptBuilder.dayLabel($0.start, calendar: .current)): \($0.sessions) sessions, \(Int($0.minutes)) min, volume \(Int($0.volumeKg ?? -1))" },
+                "lifts": report.lifts.map { "\($0.title): \($0.timesDone)x, latest \(Int($0.latest ?? 0)) kg, change \(Int($0.change ?? 0))" },
+                "records": report.records.map { "\(PromptBuilder.dayLabel($0.date, calendar: .current)) \($0.title) \(Int($0.oneRepMax)) kg" },
+                "entries": report.entries.prefix(8).map { "\(PromptBuilder.dayLabel($0.date, calendar: .current)) \($0.title) watch:\($0.workout != nil) log:\($0.session != nil)" },
+            ] as [String: Any]
         }
         let schedule = self.schedule
         state["schedule"] = [
@@ -251,7 +271,8 @@ extension AppModel {
                 "prompt": RunPromptBuilder(
                     detail: detail, snapshot: snapshot, metrics: metrics, profile: profile,
                     plannedSession: plannedSession(on: detail.summary.start), note: runAnalyses[detail.summary.id]?.note ?? "",
-                    compact: false
+                    compact: false,
+                    strengthSession: strength.session(for: detail.summary), strengthHistory: strength.sessions ?? []
                 ).prompt,
             ]
             if let saved = runAnalyses[detail.summary.id],
