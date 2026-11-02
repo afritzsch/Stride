@@ -161,7 +161,7 @@ extension AppModel {
         let now = Date.now
         var log = notificationLog
         var messages: [NotificationMessage] = []
-        let readiness = Readiness(snapshot: snapshot, metrics: metrics, profile: profile)
+        let readiness = Readiness(snapshot: snapshot, metrics: metrics, profile: profile, healthIssues: healthIssues)
         if let message = NotificationPlanner.readiness(readiness, snapshot: snapshot, planned: todaysPlan, log: log, now: now) {
             log.insert(message.id)
             if notificationSettings.readiness { messages.append(message) }
@@ -247,6 +247,9 @@ extension AppModel {
         case "strength":
             selectedTab = .dashboard
             dashboardPath = [.strength]
+        case "health":
+            selectedTab = .dashboard
+            dashboardPath = [.healthLog]
         case "workout", "review":
             selectedTab = .dashboard
             if let workout = workout(matching: argument.isEmpty ? "latest" : argument) {

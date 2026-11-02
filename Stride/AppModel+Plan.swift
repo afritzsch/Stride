@@ -7,7 +7,7 @@ extension AppModel {
 
     var readiness: Readiness? {
         guard let snapshot, let metrics else { return nil }
-        return Readiness(snapshot: snapshot, metrics: metrics, profile: profile)
+        return Readiness(snapshot: snapshot, metrics: metrics, profile: profile, healthIssues: healthIssues)
     }
 
     /// Today's session in the plan, including an applied adjustment.
@@ -23,16 +23,17 @@ extension AppModel {
         guard currentAIBlocker() == nil, !isAdjustingToday, todayAdjustment == nil || !automatically,
               let snapshot, let metrics, snapshot.isEmpty == false,
               let planned = todaysPlan, !planned.isRest, todaysWorkouts.isEmpty else { return }
-        let readiness = Readiness(snapshot: snapshot, metrics: metrics, profile: profile)
+        let readiness = Readiness(snapshot: snapshot, metrics: metrics, profile: profile, healthIssues: healthIssues)
         guard readiness.suggestsAdjusting else { return }
+        let limit = healthLog.limit(on: .now)
 
         isAdjustingToday = true
         adjustmentError = nil
         defer { isAdjustingToday = false }
-        let prompt = DayAdjustment.prompt(planned: planned, readiness: readiness, metrics: metrics, profile: profile)
+        let prompt = DayAdjustment.prompt(planned: planned, readiness: readiness, metrics: metrics, profile: profile, limit: limit)
         do {
             let result = try await generate(DayAdjustment.self, instructions: DayAdjustment.instructions, fullPrompt: prompt, compactPrompt: prompt, options: AppleAnalyzer.precise)
-            todayAdjustment = SavedAdjustment(date: .now, original: planned, adjustment: result.output.clamped(to: planned))
+            todayAdjustment = SavedAdjustment(date: .now, original: planned, adjustment: result.output.clamped(to: planned, limit: limit))
         } catch {
             // An automatic attempt fails quietly; the button stays for a manual retry.
             if !automatically { adjustmentError = error.localizedDescription }

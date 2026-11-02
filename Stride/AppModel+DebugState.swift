@@ -113,6 +113,22 @@ private extension AppModel {
         if !athleteDays.isEmpty {
             state["athleteDays"] = athleteDays.map { label($0.date) + ": " + $0.day.briefDescription }
         }
+        let block = trainingBlockWeek
+        state["trainingBlock"] = [
+            "week": block.title, "maxHardSessions": block.maxHardSessions,
+            "outline": trainingBlockOutline.map { "\(label($0.start)): \($0.title)" },
+        ] as [String: Any]
+        if !healthIssues.isEmpty {
+            let log = healthLog
+            state["healthLog"] = [
+                "issues": healthIssues.map { $0.promptLine(calendar: .current) },
+                "limits": (0..<7).compactMap { offset -> String? in
+                    guard let date = Calendar.current.date(byAdding: .day, value: offset, to: .now), let limit = log.limit(on: date) else { return nil }
+                    return "\(label(date)): \(limit.summary) (\(limit.reason))"
+                },
+                "planConflicts": healthConflicts.map { "\(label($0.date)): \($0.planned.briefDescription) → \($0.fixed.briefDescription)" },
+            ] as [String: Any]
+        }
         return state
     }
 
@@ -211,7 +227,8 @@ private extension AppModel {
                 detail: detail, snapshot: snapshot, metrics: metrics, profile: profile,
                 plannedSession: plannedSession(on: detail.summary.start), note: runAnalyses[detail.summary.id]?.note ?? "",
                 compact: false,
-                strengthSession: strength.session(for: detail.summary), strengthHistory: strength.sessions ?? []
+                strengthSession: strength.session(for: detail.summary), strengthHistory: strength.sessions ?? [],
+                healthIssues: healthIssues
             ).prompt,
         ]
         if let saved = runAnalyses[detail.summary.id],

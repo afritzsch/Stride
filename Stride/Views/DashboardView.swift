@@ -50,6 +50,7 @@ struct DashboardView: View {
                 case .metric(let metric): MetricDetailView(metric: metric)
                 case .strength: StrengthView()
                 case .strengthSession(let session): StrengthSessionView(session: session)
+                case .healthLog: HealthLogView()
                 }
             }
             .refreshable {

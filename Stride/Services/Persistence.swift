@@ -79,6 +79,7 @@ nonisolated enum JSONStore {
     static let runAnalyses = "run-analyses.json"
     static let archive = "history-archive.json"
     static let athletePlan = "athlete-plan.json"
+    static let healthLog = "health-log.json"
     static let hevyWorkouts = "hevy-workouts.json"
     /// Copies of data that can be read again (from Apple Health or Hevy). They're kept out of device backups:
     /// Apple Health itself is only backed up encrypted, and the archive holds years of it.

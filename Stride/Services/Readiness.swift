@@ -22,6 +22,8 @@ nonisolated struct Readiness: Sendable {
         /// Strong signals alone mean "take it easy"; mild ones only together.
         var isStrong: Bool
         var text: String
+        /// From the athlete's pain and illness log rather than the watch (the Today card lists those separately).
+        var isLogged = false
     }
 
     // Thresholds against the athlete's own baselines. Mild signals only count together; strong ones alone.
@@ -46,11 +48,12 @@ nonisolated struct Readiness: Sendable {
     /// What was checked and looked fine, for context.
     var fine: [String]
 
-    init(snapshot: HealthSnapshot, metrics: MetricsReport, profile: UserProfile, calendar: Calendar = .current) {
+    /// `healthIssues` are the athlete's logged pain and illness: an ongoing one is a signal of its own.
+    init(snapshot: HealthSnapshot, metrics: MetricsReport, profile: UserProfile, healthIssues: [HealthIssue] = [], calendar: Calendar = .current) {
         let today = calendar.startOfDay(for: snapshot.fetchedAt)
         let ind = metrics.indicators
         let day = snapshot.days.first { $0.date == today }
-        var signals: [Signal] = []
+        var signals = HealthLog(issues: healthIssues, calendar: calendar).signals(on: today)
         var fine: [String] = []
         let num = PromptBuilder.num
 
@@ -132,7 +135,8 @@ nonisolated extension DayAdjustment {
         - Use the day label exactly as given. Address the athlete as "you". Be brief and concrete.
         """
 
-    static func prompt(planned: PlannedDay, readiness: Readiness, metrics: MetricsReport, profile: UserProfile) -> String {
+    /// `limit` is what the logged pain or illness allows today; the adjusted session must stay within it.
+    static func prompt(planned: PlannedDay, readiness: Readiness, metrics: MetricsReport, profile: UserProfile, limit: DayLimit? = nil) -> String {
         var lines = [
             "ATHLETE: \(profile.primarySport), \(profile.experience.rawValue)",
             "HR ZONES: \(metrics.heartRateZones.summary)",
@@ -143,13 +147,14 @@ nonisolated extension DayAdjustment {
         ]
         lines += readiness.signals.map { "- \($0.isStrong ? "Strong" : "Mild") signal: \($0.text)" }
         if !readiness.fine.isEmpty { lines.append("- Within normal range: \(readiness.fine.joined(separator: ", "))") }
+        if let limit { lines.append("- Limit from the athlete's log: \(limit.summary) (\(limit.reason))") }
         lines.append("")
         lines.append("Adjust today's session (\(planned.day)).")
         return lines.joined(separator: "\n")
     }
 
-    /// Enforces "never harder or longer" and the rest-day fields, whatever the model wrote.
-    func clamped(to planned: PlannedDay) -> DayAdjustment {
+    /// Enforces "never harder or longer", the logged pain or illness and the rest-day fields, whatever the model wrote.
+    func clamped(to planned: PlannedDay, limit: DayLimit? = nil) -> DayAdjustment {
         var session = self.session
         session.day = planned.day
         if session.intensity.rank > planned.intensity.rank { session.intensity = planned.intensity }
@@ -163,6 +168,7 @@ nonisolated extension DayAdjustment {
         } else if session.sport == PlannedDay.rest {
             session.sport = planned.sport
         }
+        if let limit, let limited = limit.apply(to: session) { session = limited }
         return DayAdjustment(reason: reason, session: session)
     }
 }

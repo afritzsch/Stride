@@ -14,6 +14,7 @@ enum DashboardDestination: Hashable {
     case strength
     case strengthSession(StrengthSession)
     case metric(DashboardMetric)
+    case healthLog
 }
 
 /// The app's state and the owner of its services. The behavior lives in extensions by topic:
@@ -99,6 +100,10 @@ final class AppModel {
     }
     var isAdjustingToday = false
     var adjustmentError: String?
+    /// Pain and illness the athlete logged, oldest first. Saved to disk on every change.
+    var healthIssues: [HealthIssue] {
+        didSet { JSONStore.save(healthIssues, to: JSONStore.healthLog) }
+    }
 
     // MARK: Background refresh and notifications (AppModel+Background)
 
@@ -189,6 +194,7 @@ final class AppModel {
         autoReviewWorkouts = defaults.bool(forKey: DefaultsKey.autoReviewWorkouts, default: true)
         history = JSONStore.load([SavedAnalysis].self, from: JSONStore.analyses) ?? []
         athleteDays = JSONStore.load([AthletePlanDay].self, from: JSONStore.athletePlan) ?? []
+        healthIssues = HealthLog(issues: JSONStore.load([HealthIssue].self, from: JSONStore.healthLog) ?? []).pruned(now: .now)
         todayAdjustment = defaults.decoded(SavedAdjustment.self, forKey: DefaultsKey.todayAdjustment)
             .flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
         let savedRuns = JSONStore.load([SavedRunAnalysis].self, from: JSONStore.runAnalyses) ?? []

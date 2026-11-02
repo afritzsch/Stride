@@ -80,7 +80,8 @@ final class CoachToolbox: CoachToolAnswering {
                 detail: detail, snapshot: snapshot, metrics: metrics, profile: model.profile,
                 plannedSession: model.plannedSession(on: workout.start),
                 note: model.runAnalyses[workout.id]?.note ?? "", compact: true,
-                strengthSession: model.strength.session(for: workout), strengthHistory: model.strength.sessions ?? []
+                strengthSession: model.strength.session(for: workout), strengthHistory: model.strength.sessions ?? [],
+                healthIssues: model.healthIssues
             ).prompt
             if let review = model.runAnalyses[workout.id] {
                 brief += "\n\nYOUR EARLIER REVIEW: \(review.analysis.headline) " + review.analysis.summary.joined(separator: " ")
@@ -200,6 +201,8 @@ final class CoachToolbox: CoachToolAnswering {
             return "\(label(date))\(marker) | \(day.briefDescription) | \(day.details)"
         }
         var lines = ["COMING DAYS (day | session | details)"] + rows
+        lines.append(TrainingBlock.promptLine(model.trainingBlockWeek, profile: model.profile))
+        lines += model.healthLog.promptLines(planStart: .now, compact: true)
         if let adherence = model.planAdherence?.completed, !adherence.isEmpty {
             lines.append("LAST 7 DAYS: \(PlanAdherence.summary(of: adherence))")
             lines += adherence.filter { $0.status != .done && $0.status != .rested }.map { day in
@@ -228,7 +231,7 @@ final class CoachToolbox: CoachToolAnswering {
         // Check the week around the change against the athlete's limits and recent training.
         let plan = week.compactMap { model.plannedSession(on: $0) }
         let labels = week.map(label)
-        let context = model.metrics.map { PlanContext(metrics: $0, profile: model.profile, planStart: week[0]) }
+        let context = model.metrics.map { PlanContext(metrics: $0, profile: model.profile, planStart: week[0], healthIssues: model.healthIssues) }
         let problems = plan.count == 7 ? PlanCheck.problems(plan, labels: labels, profile: model.profile, context: context) : []
         return problems.isEmpty
             ? "Saved \(day.day): \(day.briefDescription)."

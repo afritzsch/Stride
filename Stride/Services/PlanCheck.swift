@@ -14,6 +14,10 @@ nonisolated struct PlanContext: Sendable {
     var goalTitle = ""
     /// The longest free stretch in the calendar per plan day, in minutes; nil when time suggestions are off.
     var freeMinutes: [Int]?
+    /// Where the plan's week is in the training block (phase, recovery week, hard sessions allowed).
+    var block: BlockWeek?
+    /// What the logged pain and illness allow per plan day (`HealthLog`), nil where nothing limits the day.
+    var dayLimits: [DayLimit?] = []
 
     /// Below this, a usual week is too small to measure growth against (new athletes, a comeback).
     static let minRecentMinutes = 60.0
@@ -24,15 +28,23 @@ nonisolated struct PlanContext: Sendable {
     static let finalWeekShare = 0.6
     static let taperWeekShare = 0.8
 
-    init(recentWeeklyMinutes: Double? = nil, fatigue: [String] = [], daysToGoal: Int? = nil, goalTitle: String = "", freeMinutes: [Int]? = nil) {
+    init(
+        recentWeeklyMinutes: Double? = nil, fatigue: [String] = [], daysToGoal: Int? = nil, goalTitle: String = "",
+        freeMinutes: [Int]? = nil, block: BlockWeek? = nil, dayLimits: [DayLimit?] = []
+    ) {
         self.recentWeeklyMinutes = recentWeeklyMinutes
         self.fatigue = fatigue
         self.daysToGoal = daysToGoal
         self.goalTitle = goalTitle
         self.freeMinutes = freeMinutes
+        self.block = block
+        self.dayLimits = dayLimits
     }
 
-    init(metrics: MetricsReport, profile: UserProfile, planStart: Date, freeMinutes: [Int]? = nil, calendar: Calendar = .current) {
+    init(
+        metrics: MetricsReport, profile: UserProfile, planStart: Date, freeMinutes: [Int]? = nil,
+        healthIssues: [HealthIssue] = [], calendar: Calendar = .current
+    ) {
         let start = calendar.startOfDay(for: planStart)
         let complete = metrics.weeks.filter { week in
             (calendar.date(byAdding: .day, value: 7, to: week.weekStart) ?? week.weekStart) <= start
@@ -50,6 +62,13 @@ nonisolated struct PlanContext: Sendable {
             goalTitle = PromptBuilder.goalTitle(profile)
         }
         self.freeMinutes = freeMinutes
+        block = TrainingBlock.week(start: start, profile: profile, weeks: metrics.weeks, calendar: calendar)
+        dayLimits = HealthLog(issues: healthIssues, calendar: calendar).limits(start: start)
+    }
+
+    /// The limit on a plan day, nil when nothing limits it.
+    func limit(at index: Int) -> DayLimit? {
+        dayLimits.indices.contains(index) ? dayLimits[index] : nil
     }
 
     /// The plan position of the goal day, when it falls in the plan.
@@ -101,6 +120,11 @@ nonisolated enum PlanCheck {
                 minutes: Int(recent * share),
                 reason: "the \(context.goalTitle) is \(days + 1) days after the plan starts, so the week should taper to about \(Int(share * 100))% of the usual \(usual) min"
             ))
+        } else if context.block?.isRecovery == true {
+            limits.append(MinuteLimit(
+                minutes: Int(recent * TrainingBlock.recoveryShare),
+                reason: "it's a recovery week in the training block, so about \(Int(TrainingBlock.recoveryShare * 100))% of the usual \(usual) min"
+            ))
         } else if !context.fatigue.isEmpty {
             limits.append(MinuteLimit(
                 minutes: usual,
@@ -147,6 +171,20 @@ nonisolated enum PlanCheck {
         if let goal = context?.goalIndex(days: plan.count), goal > 0, plan[goal - 1].intensity == .hard {
             problems.append("\(plan[goal - 1].day) is hard the day before the \(context?.goalTitle ?? "goal"): make it easy or a rest day.")
         }
+        if let block = context?.block {
+            let goal = context?.goalIndex(days: plan.count)
+            let hard = plan.indices.filter { $0 != goal && plan[$0].intensity == .hard }
+            if hard.count > block.maxHardSessions {
+                problems.append("The plan has \(hard.count) hard sessions but this is \(block.isRecovery ? "a recovery week" : "a \(block.phase.title.lowercased()) week") of the training block: at most \(block.maxHardSessions). Make the others easy or moderate.")
+            }
+        }
+        if let context {
+            let goal = context.goalIndex(days: plan.count)
+            for (index, day) in plan.enumerated() where !pinned.contains(index) && index != goal {
+                guard let limit = context.limit(at: index), limit.isBroken(by: day) else { continue }
+                problems.append("\(day.day) is \(day.intensity.rawValue) \(day.sport) but the athlete logged \(limit.reason): \(limit.summary) that day.")
+            }
+        }
         if let free = context?.freeMinutes, free.count == plan.count {
             for (index, day) in plan.enumerated() where !day.isRest && !pinned.contains(index) && day.durationMinutes > free[index] {
                 problems.append("\(day.day) has a \(day.durationMinutes)-min session but the athlete has only \(free[index]) min free in a row that day: move it to a day with more free time or shorten it.")
@@ -181,6 +219,14 @@ nonisolated enum PlanCheck {
 
         for index in free where !plan[index].isRest && (plan[index].durationMinutes <= 0 || plan[index].sport == PlannedDay.rest) {
             rest(index, because: "no session to do")
+        }
+
+        // What the logged pain and illness allow, before anything is counted.
+        let goalIndex = context?.goalIndex(days: plan.count)
+        for index in free where index != goalIndex {
+            guard let limit = context?.limit(at: index), let limited = limit.apply(to: plan[index]) else { continue }
+            plan[index] = limited
+            changes.append("\(limited.day): \(limited.isRest ? "rest day" : limited.briefDescription) (\(limit.reason))")
         }
 
         var extra = plan.filter { !$0.isRest }.count - profile.trainingDaysPerWeek
@@ -225,6 +271,15 @@ nonisolated enum PlanCheck {
         }
         if let goal, goal > 0, free.contains(goal - 1), plan[goal - 1].intensity == .hard {
             ease(goal - 1, because: "fresh legs for the \(context?.goalTitle ?? "goal")")
+        }
+
+        // The block's cap on hard sessions: the latest of the athlete-free ones become easy.
+        if let block = context?.block {
+            var extra = plan.indices.filter { $0 != goal && plan[$0].intensity == .hard }.count - block.maxHardSessions
+            for index in free.reversed() where extra > 0 && index != goal && plan[index].intensity == .hard {
+                ease(index, because: block.isRecovery ? "recovery week" : "at most \(block.maxHardSessions) hard in a \(block.phase.title.lowercased()) week")
+                extra -= 1
+            }
         }
         return (plan, changes)
     }
