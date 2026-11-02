@@ -25,7 +25,7 @@ extension AppModel {
             PromptBuilder(
                 snapshot: snapshot, metrics: metrics, profile: profile, planStart: planStart, compact: compact,
                 history: history, reviews: runAnalyses, athleteDays: athleteDays, adjustment: todayAdjustment,
-                availability: compact ? availability.compact : availability.full, part: part
+                availability: compact ? availability.compact : availability.full, healthIssues: healthIssues, part: part
             ).prompt
         }
 
@@ -56,7 +56,7 @@ extension AppModel {
             let pinned = trainingPlan.pinnedDays(start: planStart, calendar: calendar)
             let context = PlanContext(
                 metrics: metrics, profile: profile, planStart: planStart,
-                freeMinutes: schedule.longestFreeMinutes(start: planStart), calendar: calendar
+                freeMinutes: schedule.longestFreeMinutes(start: planStart), healthIssues: healthIssues, calendar: calendar
             )
             let planNotice = await checkPlan(&report, labels: labels, context: context, pinned: pinned)
             analysisNotice = [result.notice, planNotice].compactMap(\.self).joined(separator: " ").nilIfEmpty
@@ -167,7 +167,8 @@ extension AppModel {
                 note: note,
                 compact: compact,
                 strengthSession: strengthSession,
-                strengthHistory: strengthHistory
+                strengthHistory: strengthHistory,
+                healthIssues: healthIssues
             ).prompt
         }
         defer { runPreviews[id] = nil }

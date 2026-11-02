@@ -119,7 +119,7 @@ struct PlanDayEditor: View {
         let dates = (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
         guard dates.contains(where: { calendar.isDate($0, inSameDayAs: date) }) else { return [] }
         let days = dates.map { calendar.isDate($0, inSameDayAs: date) ? draft : model.plannedSession(on: $0) }
-        return WeekPlanEditor.problems(days: days, dates: dates, profile: model.profile)
+        return WeekPlanEditor.problems(days: days, dates: dates, model: model)
     }
 }
 
@@ -141,7 +141,7 @@ struct WeekPlanEditor: View {
     var body: some View {
         NavigationStack {
             List {
-                let problems = Self.problems(days: drafts, dates: dates, profile: model.profile)
+                let problems = Self.problems(days: drafts, dates: dates, model: model)
                 if !problems.isEmpty {
                     Section("Check") {
                         ForEach(problems, id: \.self) { Label($0, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
@@ -204,15 +204,21 @@ struct WeekPlanEditor: View {
         )
     }
 
-    /// `PlanCheck` rules for seven days; days without a plan count as rest. The rules are phrased for the model,
-    /// so "the athlete" becomes "you".
-    static func problems(days: [PlannedDay?], dates: [Date], profile: UserProfile) -> [String] {
+    /// `PlanCheck` rules for seven days, with the training block's limit on hard sessions and what the logged pain
+    /// and illness allow; days without a plan count as rest. The rules are phrased for the model, so "the athlete"
+    /// becomes "you".
+    static func problems(days: [PlannedDay?], dates: [Date], model: AppModel) -> [String] {
         let calendar = Calendar.current
         let labels = dates.map { PromptBuilder.dayLabel($0, calendar: calendar) }
         let plan = PlanCheck.normalized(zip(dates, days).map { date, day in day ?? restDay(on: date) }, labels: labels)
-        return PlanCheck.problems(plan, labels: labels, profile: profile).map {
+        let context = PlanContext(
+            block: model.trainingBlockWeek,
+            dayLimits: dates.first.map { model.healthLog.limits(start: $0, days: dates.count) } ?? []
+        )
+        return PlanCheck.problems(plan, labels: labels, profile: model.profile, context: context).map {
             $0.replacingOccurrences(of: "the athlete trains", with: "you train")
                 .replacingOccurrences(of: "the athlete has", with: "you have")
+                .replacingOccurrences(of: "the athlete logged", with: "you logged")
         }
     }
 }

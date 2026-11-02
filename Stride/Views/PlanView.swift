@@ -24,6 +24,7 @@ struct PlanView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 16) {
+                        TrainingBlockCard()
                         PlanSummary(dates: Array(dates.prefix(7)))
                         if !model.schedule.isActive {
                             ScheduleIntroCard()
@@ -103,7 +104,7 @@ private struct PlanSummary: View {
         let days = dates.map { model.plannedSession(on: $0) }
         let minutes = days.compactMap(\.self).map(\.durationMinutes).reduce(0, +)
         let sessions = days.compactMap(\.self).filter { !$0.isRest }.count
-        let problems = WeekPlanEditor.problems(days: days, dates: dates, profile: model.profile)
+        let problems = WeekPlanEditor.problems(days: days, dates: dates, model: model)
         VStack(alignment: .leading, spacing: 6) {
             Text("Next 7 days: \(Format.hours(Double(minutes) / 60)) over ^[\(sessions) session](inflect: true)")
                 .font(.subheadline)
@@ -188,13 +189,7 @@ private struct PlanDayCard: View {
         .cardBackground()
     }
 
-    /// "Today", "Tomorrow", or "Thursday 30 Oct".
-    static func title(for date: Date) -> String {
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) { return "Today" }
-        if calendar.isDateInTomorrow(date) { return "Tomorrow" }
-        return Format.day(date)
-    }
+    static func title(for date: Date) -> String { DayTitle.text(for: date) }
 }
 
 /// Session title, length, zone and details.

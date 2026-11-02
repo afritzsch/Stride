@@ -18,6 +18,8 @@ nonisolated struct PromptBuilder {
     var adjustment: SavedAdjustment? = nil
     /// Free time and rain per plan day (`SessionScheduler.availabilityLine`), empty when the calendar isn't used.
     var availability: [String] = []
+    /// Pain and illness the athlete logged; they limit the plan's days (`HealthLog`).
+    var healthIssues: [HealthIssue] = []
     /// What to write: the whole report, or one of the two steps used when it doesn't fit the context window.
     var part: Part = .report
     var calendar = Calendar.current
@@ -57,8 +59,8 @@ nonisolated struct PromptBuilder {
     private static let commonRules = [
         "Base every insight on the numbers provided and cite them (e.g. \"resting HR 55 vs 51 bpm 4-week average\"). If a metric is missing (\"–\"), say the data is unavailable. Don't invent values.",
         "Adjust load to fatigue signals: ACWR above 1.3, resting HR more than 3 bpm above baseline, HRV well below baseline, or under 7 h of sleep mean reduce intensity or volume. ACWR below 0.8 with good recovery means there is room to build gradually (about 10% per week at most).",
-        "If there is a goal event, periodize toward it using the weeks remaining (base, build, peak, then a taper in the final 1–2 weeks).",
-        "SESSION FEEDBACK holds the athlete's own words after sessions. Take pain, illness or unusual fatigue seriously and adjust the plan for it.",
+        "TRAINING BLOCK gives the phase of the athlete's training (computed from the goal date or recent weeks): follow its focus and its limit on hard sessions.",
+        "SESSION FEEDBACK holds the athlete's own words after sessions, HEALTH LOG the pain and illness they logged. Take pain, illness or unusual fatigue seriously; never plan above a listed limit.",
     ]
 
     private static let assessmentRules = [
@@ -108,6 +110,13 @@ nonisolated struct PromptBuilder {
             lines.append("- Goal: none set (general fitness)")
         }
         if !profile.notes.isEmpty { lines.append("- Notes: \(compact ? Self.quote(profile.notes, limit: 300) : profile.notes)") }
+        lines.append("")
+        lines.append(TrainingBlock.promptLine(TrainingBlock.week(start: planStart, profile: profile, weeks: metrics.weeks, calendar: calendar), profile: profile))
+        let health = HealthLog(issues: healthIssues, calendar: calendar).promptLines(planStart: planStart, compact: compact)
+        if !health.isEmpty {
+            lines.append("")
+            lines += health
+        }
 
         lines.append("")
         lines.append("KEY INDICATORS (load = Banister TRIMP from avg HR)")
@@ -196,7 +205,7 @@ nonisolated struct PromptBuilder {
         }
         if plans {
             // The limit the plan is checked against afterwards (`PlanCheck`), so the model can meet it the first time.
-            let context = PlanContext(metrics: metrics, profile: profile, planStart: planStart, calendar: calendar)
+            let context = planContext
             if let limit = PlanCheck.minuteLimits(profile: profile, context: context).min(by: { $0.minutes < $1.minutes }) {
                 lines.append("")
                 lines.append("PLAN LIMIT: at most \(limit.minutes) min of training in total\(context.goalIndex(days: 7) != nil ? " (not counting the goal day)" : ""), because \(limit.reason).")
@@ -227,6 +236,11 @@ nonisolated struct PromptBuilder {
     }
 
     private var trainingPlan: TrainingPlan { TrainingPlan(analyses: history, athleteDays: athleteDays) }
+
+    /// What the plan is checked against afterwards, without the calendar (FREE TIME states that).
+    private var planContext: PlanContext {
+        PlanContext(metrics: metrics, profile: profile, planStart: planStart, healthIssues: healthIssues, calendar: calendar)
+    }
 
     /// Plan vs actual, the athlete's session notes and earlier verdicts, so each analysis builds on the last.
     private var memorySections: [String] {

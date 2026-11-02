@@ -13,6 +13,8 @@ nonisolated struct RunPromptBuilder {
     /// to compare exercises with.
     var strengthSession: StrengthSession? = nil
     var strengthHistory: [StrengthSession] = []
+    /// Pain and illness the athlete logged; the ones on the workout's day go into the brief.
+    var healthIssues: [HealthIssue] = []
     var calendar = Calendar.current
 
     static func instructions(for kind: WorkoutKind) -> String {
@@ -90,6 +92,12 @@ nonisolated struct RunPromptBuilder {
             lines.append("GOAL: \(PromptBuilder.goalSummary(profile, calendar: calendar))")
         }
         if !profile.notes.isEmpty { lines.append("ATHLETE NOTES: \(profile.notes)") }
+        let logged = healthIssues.compactMap { issue in
+            issue.severity(on: detail.summary.start, calendar: calendar).map { "\(issue.title.lowercased()) (\($0.title.lowercased()))" }
+        }
+        if !logged.isEmpty {
+            lines.append("HEALTH LOG ON THIS DAY: \(logged.joined(separator: ", ")). Say whether the session suited it; don't diagnose.")
+        }
         return lines
     }
 

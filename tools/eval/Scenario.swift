@@ -31,7 +31,7 @@ struct Scenario {
     /// The labels the weekly prompt asks for.
     var planLabels: [String] { (1...7).map(label) }
 
-    /// Saves `history` (plus a current plan from tomorrow) and `reviews` as the app's JSON stores, and today's
+    /// Saves `history` (plus a current plan from tomorrow), `reviews` and a health log as the app's JSON stores, and today's
     /// adjustment as `today-adjustment.json` (the app keeps that in UserDefaults under `todayAdjustment`).
     func seed(into directory: URL) throws {
         let labels = planLabels
@@ -62,7 +62,10 @@ struct Scenario {
             let saved = SavedAdjustment(date: snapshot.fetchedAt, original: planned, adjustment: adjustment.clamped(to: planned))
             try JSONEncoder().encode(saved).write(to: directory.appending(path: "today-adjustment.json"))
         }
-        print("Seeded \(history.count + 1) analyses and \(reviews.count) reviews into \(directory.path())")
+        // A sore calf since yesterday, so the Today card and the plan show what the log does.
+        let calf = HealthIssue(kind: .pain, bodyPart: .calf, side: .left, severity: .moderate, started: day(-1), note: "Tight after the long run", calendar: calendar)
+        try JSONEncoder().encode([calf]).write(to: directory.appending(path: "health-log.json"))
+        print("Seeded \(history.count + 1) analyses, \(reviews.count) reviews and a health log into \(directory.path())")
     }
 
     /// Situations that stress different rules: tight availability, a race soon, data a Garmin often lacks.

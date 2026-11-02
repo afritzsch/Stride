@@ -4,6 +4,7 @@ import SwiftUI
 struct TodayCard: View {
     @Environment(AppModel.self) private var model
     @State private var picksTime = false
+    @State private var healthSheet: HealthIssueSheet?
 
     var body: some View {
         let readiness = model.readiness
@@ -12,9 +13,10 @@ struct TodayCard: View {
                 StatusBadge(text: readiness.level.title, color: readiness.level.color)
             }
         } content: {
-            if let readiness, !readiness.signals.isEmpty {
+            // Logged pain and illness are listed below, with their check-in.
+            if let signals = readiness?.signals.filter({ !$0.isLogged }), !signals.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(readiness.signals, id: \.self) { signal in
+                    ForEach(signals, id: \.self) { signal in
                         Label(signal.text, systemImage: signal.isStrong ? "exclamationmark.triangle.fill" : "exclamationmark.circle")
                             .foregroundStyle(signal.isStrong ? .orange : .secondary)
                     }
@@ -48,8 +50,11 @@ struct TodayCard: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            Divider()
+            HealthTodaySection(sheet: $healthSheet)
         }
         .sheet(isPresented: $picksTime) { SlotPickerView(date: .now) }
+        .sheet(item: $healthSheet) { HealthIssueEditor(issue: $0.issue) }
     }
 
     @ViewBuilder
