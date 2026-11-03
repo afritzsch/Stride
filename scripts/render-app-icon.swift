@@ -40,7 +40,7 @@ func render(_ variant: Variant, to path: String) {
     let full = CGRect(x: 0, y: 0, width: size, height: size)
 
     // Flat colors only: one solid background, one solid mark.
-    let brand = color(0xFF5A36)
+    let brand = color(0xFF4438)
     switch variant {
     case .light: ctx.setFillColor(brand)
     case .dark: ctx.setFillColor(color(0x161618))

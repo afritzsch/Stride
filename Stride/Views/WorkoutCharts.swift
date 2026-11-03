@@ -26,7 +26,7 @@ struct HeartRateChart: View {
                     yStart: .value("Min", low),
                     yEnd: .value("BPM", point.bpm)
                 )
-                .foregroundStyle(LinearGradient(colors: [.red.opacity(0.35), .red.opacity(0.02)], startPoint: .top, endPoint: .bottom))
+                .foregroundStyle(.red.opacity(0.15))
                 .interpolationMethod(.monotone)
                 LineMark(x: .value("Minutes", point.minutes), y: .value("BPM", point.bpm))
                     .foregroundStyle(.red)
@@ -53,7 +53,7 @@ struct ZoneBreakdown: View {
                     Text("Z\(index + 1)").font(.caption.bold()).frame(width: 24, alignment: .leading)
                     GeometryReader { proxy in
                         RoundedRectangle(cornerRadius: 3)
-                            .fill(Color.heartRateZone(index).gradient)
+                            .fill(Color.heartRateZone(index))
                             .frame(width: max(2, proxy.size.width * value / total))
                     }
                     .frame(height: 14)
@@ -99,7 +99,7 @@ struct SplitsCard: View {
                             let range = max(slowest - fastest, 1)
                             let share = 0.35 + 0.65 * (slowest - split.paceSecondsPerKm) / range
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(split.paceSecondsPerKm == fastest ? Color.orange.gradient : Color.accentColor.gradient)
+                                .fill(split.paceSecondsPerKm == fastest ? Color.orange : Color.accentColor)
                                 .frame(width: proxy.size.width * share)
                         }
                         .frame(height: 12)

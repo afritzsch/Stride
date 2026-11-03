@@ -103,7 +103,7 @@ private struct AchievementBadge: View {
             Image(systemName: achievement.systemImage)
                 .font(.title2)
                 .frame(width: 52, height: 52)
-                .background(achievement.isUnlocked ? AnyShapeStyle(Color.yellow.gradient) : AnyShapeStyle(.fill.tertiary), in: .circle)
+                .background(achievement.isUnlocked ? AnyShapeStyle(Color.yellow) : AnyShapeStyle(.fill.tertiary), in: .circle)
                 .foregroundStyle(achievement.isUnlocked ? .black : .secondary)
             Text(achievement.title)
                 .font(.caption.bold())
