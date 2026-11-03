@@ -79,7 +79,7 @@ struct SkillDetailView: View {
             Chart {
                 ForEach(buckets, id: \.start) { bucket in
                     BarMark(x: .value("Period", bucket.start, unit: granularity.component), y: .value("XP", bucket.value ?? 0))
-                        .foregroundStyle(skill.color.gradient)
+                        .foregroundStyle(skill.color)
                         .cornerRadius(3)
                 }
                 if let average = MetricsReport.mean(values) {

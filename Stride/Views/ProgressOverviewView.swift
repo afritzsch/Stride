@@ -123,7 +123,7 @@ struct LevelRing: View {
             Circle().stroke(tint.opacity(0.18), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: fraction)
-                .stroke(tint.gradient, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             VStack(spacing: -2) {
                 Text("LV").font(.system(size: size * 0.14, weight: .bold)).foregroundStyle(.secondary)

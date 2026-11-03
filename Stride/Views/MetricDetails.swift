@@ -23,7 +23,7 @@ struct LoadDetail: View {
         Card(title: "Daily load, last 4 weeks") {
             Chart(snapshot.days.filter { $0.date >= snapshot.start(ofLast: 28) }) { day in
                 BarMark(x: .value("Day", day.date, unit: .day), y: .value("Load", metrics.dailyLoad[day.date] ?? 0))
-                    .foregroundStyle(.orange.gradient)
+                    .foregroundStyle(.orange)
             }
             .frame(height: 180)
         }
@@ -237,7 +237,7 @@ struct StepsDetail: View {
                 ForEach(snapshot.days) { day in
                     if let steps = day.steps {
                         BarMark(x: .value("Day", day.date, unit: .day), y: .value("Steps", steps))
-                            .foregroundStyle(steps >= Double(target) ? Color.green.gradient : Color.gray.gradient)
+                            .foregroundStyle(steps >= Double(target) ? Color.green : Color.gray)
                     }
                 }
                 RuleMark(y: .value("Target", target))

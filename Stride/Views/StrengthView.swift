@@ -124,7 +124,7 @@ private struct WeeklyChart: View {
                     x: .value("Week", week.start, unit: .weekOfYear),
                     y: .value(usesVolume ? "Tonnes" : "Minutes", usesVolume ? (week.volumeKg ?? 0) / 1000 : week.minutes)
                 )
-                .foregroundStyle(Color.purple.gradient)
+                .foregroundStyle(Color.purple)
                 .cornerRadius(4)
                 .annotation(position: .top) {
                     if week.sessions > 0 {

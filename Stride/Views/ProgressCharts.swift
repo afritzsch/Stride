@@ -37,7 +37,7 @@ struct LevelHistoryCard: View {
                 Chart {
                     ForEach(points, id: \.date) { point in
                         AreaMark(x: .value("Week", point.date, unit: .weekOfYear), y: .value("Level", point.level))
-                            .foregroundStyle(tint.opacity(0.15).gradient)
+                            .foregroundStyle(tint.opacity(0.15))
                             .interpolationMethod(.monotone)
                         LineMark(x: .value("Week", point.date, unit: .weekOfYear), y: .value("Level", point.level))
                             .foregroundStyle(tint)
@@ -137,7 +137,7 @@ struct TrendCard: View {
                         if let value = bucket.value {
                             if metric.isSum {
                                 BarMark(x: .value("Period", bucket.start, unit: granularity.component), y: .value(metric.title, value))
-                                    .foregroundStyle(metric.color.gradient)
+                                    .foregroundStyle(metric.color)
                                     .cornerRadius(3)
                             } else {
                                 LineMark(x: .value("Period", bucket.start, unit: granularity.component), y: .value(metric.title, value))

@@ -12,7 +12,7 @@ struct WeeklyLoadChart: View {
                     x: .value("Week", week.weekStart, unit: .weekOfYear),
                     y: .value("Load", week.load)
                 )
-                .foregroundStyle(.orange.gradient)
+                .foregroundStyle(.orange)
                 .cornerRadius(4)
             }
             .biweeklyDateAxis()
@@ -38,7 +38,7 @@ struct SleepChart: View {
                         x: .value("Night", night.date, unit: .day),
                         y: .value("Hours", night.asleepHours)
                     )
-                    .foregroundStyle(Self.isOnTarget(night.asleepHours, target: target) ? Color.indigo.gradient : Color.orange.gradient)
+                    .foregroundStyle(Self.isOnTarget(night.asleepHours, target: target) ? Color.indigo : Color.orange)
                 }
                 RuleMark(y: .value("Target", target))
                     .referenceLine()
