@@ -25,6 +25,7 @@ struct DashboardView: View {
                         if snapshot.isEmpty {
                             NoDataCard()
                         } else {
+                            DataFreshnessNote(fetchedAt: snapshot.fetchedAt, isDemo: snapshot.isDemo, isMissingMorningData: model.isMissingMorningData)
                             TodayCard()
                             IndicatorGrid(metrics: metrics, profile: model.profile)
                             MetricLink(metric: .load) { WeeklyLoadChart(weeks: metrics.weeks, isLink: true) }
@@ -68,12 +69,37 @@ struct DashboardView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Refresh", systemImage: "arrow.clockwise") {
-                        Task { await model.refresh() }
+                    if model.isLoadingHealth {
+                        ProgressView()
+                    } else {
+                        Button("Refresh", systemImage: "arrow.clockwise") {
+                            Task { await model.refresh() }
+                        }
                     }
-                    .disabled(model.isLoadingHealth)
                 }
             }
+        }
+    }
+}
+
+/// When the data was read, and a hint when this morning's numbers aren't in Apple Health yet, so a refresh that
+/// finds nothing new doesn't look like it did nothing.
+private struct DataFreshnessNote: View {
+    let fetchedAt: Date
+    let isDemo: Bool
+    let isMissingMorningData: Bool
+
+    var body: some View {
+        if !isDemo {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Updated \(fetchedAt, format: .relative(presentation: .named))")
+                if isMissingMorningData {
+                    Label("Last night's sleep and recovery aren't in Apple Health yet. Garmin Connect writes them when it syncs: open Garmin Connect, then refresh here.", systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
