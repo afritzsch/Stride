@@ -56,6 +56,27 @@ extension AppModel {
         }
     }
 
+    /// Called when the app comes to the foreground. iOS often keeps it suspended overnight, and the snapshot is only
+    /// read at launch, so the morning would otherwise still show last night's data.
+    func refreshIfStale() async {
+        guard !isLoadingHealth, !needsHealthAuthorization else { return }
+        // No snapshot and no error: the first load (ContentView) hasn't finished yet.
+        guard snapshot != nil || healthError != nil else { return }
+        if let fetchedAt = snapshot?.fetchedAt, healthError == nil,
+           Calendar.current.isDateInToday(fetchedAt), Date.now.timeIntervalSince(fetchedAt) < Limits.foregroundRefreshAge {
+            return
+        }
+        await refresh()
+    }
+
+    /// Whether this morning's own numbers (sleep, resting HR or HRV) are in. Garmin Connect writes them to Apple
+    /// Health only when it syncs, which is often not before the athlete opens it.
+    var isMissingMorningData: Bool {
+        guard let snapshot, !snapshot.isDemo, !snapshot.isEmpty else { return false }
+        let hour = Calendar.current.component(.hour, from: .now)
+        return hour >= 5 && !NotificationPlanner.hasMorningData(snapshot, now: .now, calendar: .current)
+    }
+
     func connectHealth() async {
         do {
             try await health.requestAuthorization()

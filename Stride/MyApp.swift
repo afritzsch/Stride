@@ -27,7 +27,11 @@ import UserNotifications
                 }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { model.scheduleBackgroundRefresh() }
+            switch phase {
+            case .background: model.scheduleBackgroundRefresh()
+            case .active: Task { await model.refreshIfStale() }
+            default: break
+            }
         }
         .backgroundTask(.appRefresh(AppModel.backgroundRefreshTaskID)) {
             await model.backgroundAppRefresh()

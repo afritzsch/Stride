@@ -225,6 +225,8 @@ final class AppModel {
         /// Athlete-planned days older than this are dropped; nothing looks back further.
         static let athleteDayRetentionDays = 60
         static let archiveMaxAge: TimeInterval = 7 * 86400
+        /// Coming back to the app rereads Apple Health when the data is older than this (or from another day).
+        static let foregroundRefreshAge: TimeInterval = 5 * 60
         /// Automatic reviews: workouts from this many days back, at most this many per refresh.
         static let autoReviewWindow: TimeInterval = 2 * 24 * 3600
         static let autoReviewBatch = 3
