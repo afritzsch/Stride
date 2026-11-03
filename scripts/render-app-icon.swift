@@ -39,46 +39,24 @@ func render(_ variant: Variant, to path: String) {
     ctx.scaleBy(x: 1, y: -1)
     let full = CGRect(x: 0, y: 0, width: size, height: size)
 
-    let orange = color(0xFF8A3D), pink = color(0xFF2D55)
+    // Flat colors only: one solid background, one solid mark.
+    let brand = color(0xFF5A36)
     switch variant {
-    case .light:
-        let bg = CGGradient(colorsSpace: space, colors: [orange, pink] as CFArray, locations: [0, 1])!
-        ctx.drawLinearGradient(bg, start: .zero, end: CGPoint(x: size, y: size), options: [])
-        let glow = CGGradient(colorsSpace: space, colors: [color(0xFFFFFF, 0.22), color(0xFFFFFF, 0)] as CFArray, locations: [0, 1])!
-        ctx.drawRadialGradient(glow, startCenter: CGPoint(x: 230, y: 180), startRadius: 0, endCenter: CGPoint(x: 230, y: 180), endRadius: 700, options: [])
-    case .dark:
-        let bg = CGGradient(colorsSpace: space, colors: [color(0x2C2C30), color(0x111113)] as CFArray, locations: [0, 1])!
-        ctx.drawLinearGradient(bg, start: .zero, end: CGPoint(x: size, y: size), options: [])
-    case .tinted:
-        ctx.setFillColor(color(0x000000))
-        ctx.fill(full)
+    case .light: ctx.setFillColor(brand)
+    case .dark: ctx.setFillColor(color(0x161618))
+    case .tinted: ctx.setFillColor(color(0x000000))
     }
+    ctx.fill(full)
 
-    // Soft shadow under the mark on the colored variant.
-    if variant == .light {
-        ctx.setShadow(offset: CGSize(width: 0, height: 14), blur: 30, color: color(0x8A0F2A, 0.35))
-    }
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
     ctx.setLineWidth(lineWidth)
     let dot = CGRect(x: end.x - dotRadius, y: end.y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
-
-    switch variant {
-    case .light, .tinted:
-        ctx.setStrokeColor(color(0xFFFFFF))
-        ctx.setFillColor(color(0xFFFFFF))
-        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-        ctx.addPath(strokePath()); ctx.strokePath()
-        ctx.fillEllipse(in: dot)
-        ctx.endTransparencyLayer()
-    case .dark:
-        // Fill the stroked outline + dot with the brand gradient.
-        let outline = strokePath().copy(strokingWithWidth: lineWidth, lineCap: .round, lineJoin: .round, miterLimit: 10)
-        ctx.addPath(outline.union(CGPath(ellipseIn: dot, transform: nil)))
-        ctx.clip()
-        let fg = CGGradient(colorsSpace: space, colors: [orange, pink] as CFArray, locations: [0, 1])!
-        ctx.drawLinearGradient(fg, start: CGPoint(x: 150, y: 700), end: CGPoint(x: 900, y: 250), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-    }
+    let mark = variant == .dark ? brand : color(0xFFFFFF)
+    ctx.setStrokeColor(mark)
+    ctx.setFillColor(mark)
+    ctx.addPath(strokePath()); ctx.strokePath()
+    ctx.fillEllipse(in: dot)
 
     let image = ctx.makeImage()!
     let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, UTType.png.identifier as CFString, 1, nil)!
