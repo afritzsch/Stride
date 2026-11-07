@@ -25,11 +25,6 @@ nonisolated enum DefaultsKey {
     static let scheduleSettings = "scheduleSettings"
     static let hevyAccountName = "hevyAccountName"
     static let hevyLastSync = "hevyLastSync"
-    /// `MusicSource` for playlists.
-    static let musicSource = "musicSource"
-    /// The Client ID of the athlete's own Spotify app (not a secret; the tokens are in the Keychain).
-    static let spotifyClientID = "spotifyClientID"
-    static let spotifyAccountName = "spotifyAccountName"
     static let removedClaudeSettings = "removedClaudeSettings"
     static let notifyReadiness = "notifyReadiness"
     static let notifyNewWorkouts = "notifyNewWorkouts"
@@ -49,7 +44,6 @@ nonisolated enum DefaultsKey {
     static let exportFixture = "exportFixture"
     static let probeModel = "probeModel"
     static let demoHevy = "demoHevy"
-    static let spotifyLogin = "spotifyLogin"
     /// `-notify readiness|workout|session|all` posts that notification a few seconds after launch;
     /// `-notifyOpen readiness|workout|session` handles a tap on it.
     static let notify = "notify"

@@ -1,23 +1,6 @@
 import Foundation
 import FoundationModels
 
-/// Where playlists come from and go to.
-nonisolated enum MusicSource: String, CaseIterable, Identifiable, Sendable {
-    /// Songs in the iPhone's music library (MediaPlayer), saved as a playlist in the Music app.
-    case appleMusic
-    /// The athlete's Spotify listening (Web API), saved as a private playlist in their account.
-    case spotify
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .appleMusic: "Apple Music"
-        case .spotify: "Spotify"
-        }
-    }
-}
-
 /// A song in the athlete's own music library (`MusicLibraryService`), or a made-up one in demo mode (`DemoMusic`).
 nonisolated struct LibrarySong: Codable, Hashable, Identifiable, Sendable {
     /// `MPMediaItem.persistentID` as a string.
@@ -110,7 +93,6 @@ nonisolated struct WorkoutPlaylist: Identifiable, Sendable {
     var sections: [Section]
     /// False when code picked the songs alone (no Apple Intelligence, or the model failed).
     var madeByModel: Bool
-    var source: MusicSource = .appleMusic
 
     var songs: [LibrarySong] { sections.flatMap(\.songs) }
     var seconds: Int { sections.reduce(0) { $0 + $1.seconds } }
@@ -294,9 +276,6 @@ nonisolated enum PlaylistBuilder {
     ) -> WorkoutPlaylist {
         var offset = 0
         var used = Set<String>()
-        // Each section aims at its end time in the session, so one that ran long shortens the next.
-        var elapsed = 0
-        var sectionEnd = 0
         let sections = segments.enumerated().map { index, segment in
             let list = shortlists[index]
             defer { offset += list.count }
@@ -305,9 +284,8 @@ nonisolated enum PlaylistBuilder {
                 let local = number - 1 - offset
                 return list.indices.contains(local) ? list[local] : nil
             }
-            sectionEnd += segment.minutes * 60
             // Within a minute of the target counts as full, except at the end: the music mustn't stop before the session does.
-            let target = sectionEnd - elapsed - (index == segments.count - 1 ? 0 : 60)
+            let target = segment.minutes * 60 - (index == segments.count - 1 ? 0 : 60)
             var songs: [LibrarySong] = []
             var seconds = 0
             for song in picked + list where seconds < target && !used.contains(song.id) {
@@ -319,7 +297,6 @@ nonisolated enum PlaylistBuilder {
                 used.insert(song.id)
                 seconds += song.seconds
             }
-            elapsed += seconds
             return WorkoutPlaylist.Section(segment: segment, songs: songs)
         }
         let name = draft?.name.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "\(day.session) · \(day.durationMinutes) min"

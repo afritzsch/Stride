@@ -33,7 +33,6 @@ struct ContentView: View {
             await model.handleLaunchExport()
             #if DEBUG
             await model.handleNotificationHooks()
-            await model.handleSpotifyLoginHook()
             #endif
         }
     }
