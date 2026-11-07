@@ -1,23 +1,6 @@
 import Foundation
 import FoundationModels
 
-/// Where playlists come from and go to.
-nonisolated enum MusicSource: String, CaseIterable, Identifiable, Sendable {
-    /// Songs in the iPhone's music library (MediaPlayer), saved as a playlist in the Music app.
-    case appleMusic
-    /// The athlete's Spotify listening (Web API), saved as a private playlist in their account.
-    case spotify
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .appleMusic: "Apple Music"
-        case .spotify: "Spotify"
-        }
-    }
-}
-
 /// A song in the athlete's own music library (`MusicLibraryService`), or a made-up one in demo mode (`DemoMusic`).
 nonisolated struct LibrarySong: Codable, Hashable, Identifiable, Sendable {
     /// `MPMediaItem.persistentID` as a string.
@@ -110,7 +93,6 @@ nonisolated struct WorkoutPlaylist: Identifiable, Sendable {
     var sections: [Section]
     /// False when code picked the songs alone (no Apple Intelligence, or the model failed).
     var madeByModel: Bool
-    var source: MusicSource = .appleMusic
 
     var songs: [LibrarySong] { sections.flatMap(\.songs) }
     var seconds: Int { sections.reduce(0) { $0 + $1.seconds } }
