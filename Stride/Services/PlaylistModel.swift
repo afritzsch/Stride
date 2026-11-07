@@ -22,6 +22,12 @@ final class PlaylistModel {
 
     private var isDemo: Bool { model?.snapshot?.isDemo == true }
 
+    /// Today's planned session, or the athlete's usual one on a rest day or without a plan.
+    var todaysSession: PlannedDay {
+        if let planned = model?.todaysPlan, !planned.isRest, planned.durationMinutes > 0 { return planned }
+        return PlaylistBuilder.usualSession(recent: model?.snapshot?.workouts ?? [], now: .now)
+    }
+
     func build(for day: PlannedDay, on date: Date = .now) async {
         guard let model, !isBuilding else { return }
         isBuilding = true

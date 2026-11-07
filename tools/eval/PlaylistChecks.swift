@@ -23,6 +23,14 @@ func checkPlaylists() {
     let short = PlaylistBuilder.segments(for: day(Sport.running, .easy, 15, zone: 2))
     check(short.count == 1 && short[0].minutes == 15, "a short session is one section")
 
+    // Without a planned session: the usual one.
+    let usual = PlaylistBuilder.usualSession(recent: workouts, now: now)
+    check(usual.intensity == .easy && (20...120).contains(usual.durationMinutes) && usual.durationMinutes % 5 == 0,
+          "usual session is easy and 20–120 min in 5-min steps, got \(usual.session) \(usual.durationMinutes) min")
+    check(!PlaylistBuilder.segments(for: usual).isEmpty, "usual session has sections")
+    let nothing = PlaylistBuilder.usualSession(recent: [], now: now)
+    check(nothing.sport == Sport.running && nothing.durationMinutes == 45, "no workouts: a 45-min easy run")
+
     // Energy from genre.
     check(SongEnergy(genre: "Soft Rock") == .calm && SongEnergy(genre: "Alternative Rock") == .driving && SongEnergy(genre: "Pop") == .steady,
           "genre energy: soft rock calm, rock driving, pop steady")

@@ -117,6 +117,21 @@ nonisolated enum PlaylistBuilder {
     static let maxCandidates = 48
     static let maxPerArtist = 2
 
+    /// The session a playlist follows when none is planned (no plan, a rest day): an easy one in the athlete's most
+    /// frequent sport of the last 4 weeks, as long as their usual session (median, in 5-minute steps, 20–120 min).
+    static func usualSession(recent workouts: [WorkoutSummary], now: Date) -> PlannedDay {
+        let since = now.addingTimeInterval(-28 * 86400)
+        let recent = workouts.filter { $0.start >= since && $0.durationMinutes >= 10 }
+        let counts = Dictionary(recent.map { ($0.sport, 1) }, uniquingKeysWith: +)
+        let sport = counts.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key ?? Sport.running
+        let minutes = recent.filter { $0.sport == sport }.map(\.durationMinutes).sorted()
+        let median = minutes.isEmpty ? 45 : minutes[minutes.count / 2]
+        let rounded = min(max(Int((median / 5).rounded()) * 5, 20), 120)
+        let zone = WorkoutSummary.strengthSports.contains(sport) ? 0 : 2
+        return PlannedDay(day: "", sport: sport, intensity: .easy, session: "Easy \(sport.lowercased())",
+                          durationMinutes: rounded, targetZone: zone, details: "")
+    }
+
     // MARK: Sections
 
     static func segments(for day: PlannedDay) -> [PlaylistSegment] {

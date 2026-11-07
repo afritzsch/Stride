@@ -252,7 +252,7 @@ extension AppModel {
             dashboardPath = [.healthLog]
         case "playlist":
             selectedTab = .dashboard
-            playlists.isShowing = todaysPlan.map { !$0.isRest } ?? false
+            playlists.isShowing = true
         case "workout", "review":
             selectedTab = .dashboard
             if let workout = workout(matching: argument.isEmpty ? "latest" : argument) {
