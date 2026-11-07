@@ -274,9 +274,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Stride/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
+				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Stride reads the songs in your music library to build playlists for your training sessions, and saves the ones you keep.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Stride looks for free time in your calendar to suggest when to train, and adds the sessions you pick.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV, steps and weight from Apple Health so the AI coach can analyze your training and plan your week.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Stride saves the weight you log in the app to Apple Health.";
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Stride looks for free time in your calendar to suggest when to train, and adds the sessions you pick.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Stride uses your approximate location to get the weather forecast for your training times.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -323,9 +324,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Stride/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Stride;
+				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Stride reads the songs in your music library to build playlists for your training sessions, and saves the ones you keep.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Stride looks for free time in your calendar to suggest when to train, and adds the sessions you pick.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Stride reads your workouts and their routes, sleep, heart rate, HRV, steps and weight from Apple Health so the AI coach can analyze your training and plan your week.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Stride saves the weight you log in the app to Apple Health.";
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Stride looks for free time in your calendar to suggest when to train, and adds the sessions you pick.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Stride uses your approximate location to get the weather forecast for your training times.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

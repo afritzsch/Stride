@@ -136,6 +136,8 @@ final class AppModel {
     @ObservationIgnored private(set) lazy var schedule = ScheduleModel(model: self)
     /// The Hevy lifting log, when connected.
     @ObservationIgnored private(set) lazy var strength = StrengthModel(model: self)
+    /// Playlists for planned sessions from the athlete's music library.
+    @ObservationIgnored private(set) lazy var playlists = PlaylistModel(model: self)
 
     var selectedTab = AppTab.dashboard
     var showsCoachChat = false

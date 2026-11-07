@@ -3,7 +3,7 @@ import FoundationModels
 
 /// Hooks for driving the app from the Simulator (see tools/stride-mcp). Debug builds only read these
 /// launch arguments:
-///   -route dashboard | coach | chat | plan | settings | workouts | strength
+///   -route dashboard | coach | chat | plan | settings | workouts | strength | playlist
 ///          | workout:<latest | latest-run | latest-strength | index | uuid> | review:<same> (opens the coach review)
 ///          | progress | skill:<endurance | power | strength | explorer | vitality | rest | discipline>
 ///          | metric:<load | acwr | sleep | restingHR | hrv | steps | weight>
