@@ -59,6 +59,8 @@ struct SettingsView: View {
 
                 HevySettingsSection()
 
+                MusicSettingsSection()
+
                 Section("Goal") {
                     Toggle("Training for an event", isOn: $model.profile.hasGoal)
                     if model.profile.hasGoal {

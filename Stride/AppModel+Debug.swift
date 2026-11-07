@@ -18,6 +18,7 @@ import FoundationModels
 ///   -notify <kind>        post that notification (readiness, workout, session or all) a few seconds after launch,
 ///                         from the current data, whatever the switches and the time of day
 ///   -notifyOpen <kind>    handle a tap on that notification (readiness, workout or session) after launch
+///   -spotifyLogin YES     start the Spotify login after launch (with -spotifyClientID <id>, or the saved one)
 ///   -probeModel YES       ask the on-device model for one word whatever `availability` says; writes Documents/model-probe.json
 extension AppModel {
     static func loadFixture() -> HealthFixture? {
@@ -155,6 +156,19 @@ extension AppModel {
         if let kind = defaults.string(forKey: DefaultsKey.notifyOpen).flatMap(NotificationKind.init(rawValue:)),
            let message = debugNotification(kind) {
             handleNotificationTap(userInfo: [NotificationService.routeKey: message.route])
+        }
+    }
+
+    /// The -spotifyLogin hook: runs the login flow, so the loopback redirect can be checked without tapping Connect.
+    func handleSpotifyLoginHook() async {
+        guard UserDefaults.standard.bool(forKey: DefaultsKey.spotifyLogin) else { return }
+        // The login sheet needs a key window to present from.
+        try? await Task.sleep(for: .seconds(2))
+        do {
+            try await playlists.connectSpotify()
+            debugLog("-spotifyLogin: connected as \(playlists.spotifyAccountName ?? "?")")
+        } catch {
+            debugLog("-spotifyLogin failed: \(error.localizedDescription)")
         }
     }
 

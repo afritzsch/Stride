@@ -4,6 +4,7 @@ import SwiftUI
 struct PlaylistSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     var day: PlannedDay
 
     var body: some View {
@@ -24,13 +25,18 @@ struct PlaylistSheet: View {
                         }
                         .padding(.vertical, 4)
                         HStack {
-                            Button("Play", systemImage: "play.fill") { playlists.play() }
-                                .buttonStyle(.borderedProminent)
-                            Button(playlists.isSaved ? "Saved" : "Save to Music", systemImage: playlists.isSaved ? "checkmark" : "plus") {
+                            Button(playlist.source == .spotify ? "Open in Spotify" : "Play", systemImage: "play.fill") {
+                                Task { if let url = await playlists.play() { openURL(url) } }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button(
+                                playlists.isSaved ? "Saved" : (playlist.source == .spotify ? "Save" : "Save to Music"),
+                                systemImage: playlists.isSaved ? "checkmark" : "plus"
+                            ) {
                                 Task { await playlists.save() }
                             }
                             .buttonStyle(.bordered)
-                            .disabled(playlists.isSaved)
+                            .disabled(playlists.isSaved || playlists.isSaving)
                         }
                         .font(.subheadline)
                     }
@@ -46,7 +52,8 @@ struct PlaylistSheet: View {
                 } else if playlists.isBuilding {
                     HStack(spacing: 8) {
                         ProgressView()
-                        Text("Picking songs from your library…").foregroundStyle(.secondary)
+                        Text(playlists.source == .spotify ? "Picking songs from your Spotify…" : "Picking songs from your library…")
+                            .foregroundStyle(.secondary)
                     }
                 }
                 if let error = playlists.error {
@@ -71,7 +78,8 @@ struct PlaylistSheet: View {
             }
             .task {
                 // Keep a playlist made earlier today for the same session.
-                if let playlist = playlists.playlist, Calendar.current.isDateInToday(playlist.date), playlist.session == day { return }
+                if let playlist = playlists.playlist, Calendar.current.isDateInToday(playlist.date), playlist.session == day,
+                   playlist.source == playlists.source { return }
                 await playlists.build(for: day)
             }
         }
