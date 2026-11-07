@@ -68,9 +68,13 @@ func checkPlaylists() {
     let session = day(Sport.running, .hard, 60, zone: 4)
     let plain = PlaylistBuilder.assemble(day: session, date: now, segments: intervals, shortlists: lists, draft: nil)
     check(!plain.madeByModel && plain.name.contains("60 min"), "code-only playlist gets a session name")
+    // Sections end near their planned time in the session (a song may run over; the next section then makes up for it).
+    var plannedEnd = 0, actualEnd = 0
     for (section, segment) in zip(plain.sections, intervals) {
-        check(section.seconds >= segment.minutes * 60 - 90, "\(segment.role.rawValue) filled: \(section.seconds / 60) of \(segment.minutes) min")
-        check(section.seconds <= segment.minutes * 60 + 6 * 60, "\(segment.role.rawValue) not overfilled: \(section.seconds / 60) of \(segment.minutes) min")
+        plannedEnd += segment.minutes * 60
+        actualEnd += section.seconds
+        check(actualEnd >= plannedEnd - 90 && actualEnd <= plannedEnd + 6 * 60,
+              "\(segment.role.rawValue) ends at \(actualEnd / 60) min, planned \(plannedEnd / 60)")
     }
     check(plain.seconds >= 60 * 60 && plain.seconds <= 60 * 60 + 5 * 60, "60-min session gets 60–65 min of music, got \(plain.seconds / 60)")
     for minutes in [30, 45, 85] {

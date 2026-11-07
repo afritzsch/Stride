@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// Hevy's public API (https://api.hevyapp.com/docs, Hevy Pro only). The key comes from
 /// https://hevy.com/settings?developer and goes in the `api-key` header.
@@ -212,38 +211,15 @@ nonisolated struct HevyClient: Sendable {
 
 /// The Hevy API key, kept in the Keychain on this device only.
 nonisolated enum HevyKeychain {
-    private static let query: [String: Any] = [
-        kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "Stride.hevy",
-        kSecAttrAccount as String: "apiKey",
-    ]
+    private static let item = KeychainItem(service: "Stride.hevy", account: "apiKey")
 
     static func load() -> String? {
-        var query = query
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        item.load().flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// Replaces the stored key. Returns false when the Keychain refused it (the key then isn't kept across launches).
     @discardableResult
-    static func save(_ key: String) -> Bool {
-        var attributes: [String: Any] = [
-            kSecValueData as String: Data(key.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-        ]
-        // Update in place so a failed write doesn't also lose the previous key.
-        var status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
-            attributes.merge(query) { $1 }
-            status = SecItemAdd(attributes as CFDictionary, nil)
-        }
-        return status == errSecSuccess
-    }
+    static func save(_ key: String) -> Bool { item.save(Data(key.utf8)) }
 
-    static func delete() {
-        SecItemDelete(query as CFDictionary)
-    }
+    static func delete() { item.delete() }
 }
