@@ -45,15 +45,14 @@ struct TodayCard: View {
                 if let schedule = model.schedule.schedule(on: .now) {
                     SessionTimeLine(schedule: schedule) { picksTime = true }
                 }
-                if !planned.isRest, planned.durationMinutes > 0 {
-                    Button("Make a playlist", systemImage: "music.note.list") { model.playlists.isShowing = true }
-                        .font(.subheadline)
-                }
             } else {
                 Text("No session planned for today. Run an analysis on the AI Coach tab to get a plan, or plan the day yourself on the Plan tab.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+            // Always there: without a planned session it follows the athlete's usual one.
+            Button("Make a playlist", systemImage: "music.note.list") { model.playlists.isShowing = true }
+                .font(.subheadline)
             Divider()
             HealthTodaySection(sheet: $healthSheet)
         }
@@ -61,7 +60,7 @@ struct TodayCard: View {
         .sheet(item: $healthSheet) { HealthIssueEditor(issue: $0.issue) }
         .sheet(isPresented: Bindable(model.playlists).isShowing) {
             // The adjusted session when the athlete took it, since that's what todaysPlan returns.
-            if let planned = model.todaysPlan { PlaylistSheet(day: planned) }
+            PlaylistSheet(day: model.playlists.todaysSession)
         }
     }
 
